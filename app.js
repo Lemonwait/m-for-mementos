@@ -244,6 +244,12 @@
       entry.target.classList.remove("leaving");
       entry.target.classList.add("active");
       activeSection = entry.target;
+      // Safety net: a real .event becoming active means we're definitely
+      // not looking at the outro anymore, regardless of which path (gate
+      // or general snap fallback) got us here. See the matching add-side
+      // safety net in boundaryObserver below for why this can't just be
+      // left to the two dedicated endscreen-transition functions alone.
+      outroEl.classList.remove("revealed");
 
       const idx = Number(entry.target.dataset.index);
       const year = Number(entry.target.dataset.year);
@@ -278,6 +284,22 @@
           yearWatermarkEl.classList.add("hidden");
           counterEl.textContent = `${entry.target.id === "hero" ? "00" : String(total).padStart(2, "0")} / ${total}`;
           Object.values(yearButtons).forEach((btn) => btn.classList.remove("active"));
+          // Safety net, add-side: a fast/large scroll can jump clean over
+          // the last card's whole viewport window between two wheel
+          // samples, so endscreenGate's isNearLastCard() check never fires
+          // true for any single event — the scroll falls through entirely
+          // to the general snap system, which can land squarely on the
+          // outro (nearestSnapTarget picks it, scrollIntoView lands on it)
+          // without ever running through runEndscreenTransition(), the
+          // only place that used to add "revealed". That's the actual
+          // "dead-stop skipped, straight into a dark screen" bug: outro
+          // fully in view, but never marked revealed, so its text/button
+          // stayed at opacity:0. This observer fires off real final
+          // geometry regardless of which path got us here, so tying
+          // "revealed" to it directly (rather than only to the two
+          // dedicated gate functions) closes the gap for good, however
+          // large a single scroll jump was.
+          if (entry.target === outroEl) outroEl.classList.add("revealed");
         }
       });
     },
