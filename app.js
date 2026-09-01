@@ -18,7 +18,7 @@
       const first = MEMENTOS.find((m) => m.year === year);
       const target = document.getElementById(`event-${first.i}`);
       if (target) {
-        setCurrentTarget(target);
+        goTo(snapTargets.indexOf(target));
         target.scrollIntoView({ behavior: "smooth" });
       }
     });
@@ -90,6 +90,11 @@
   }
 
   // ---- lazy image fade-in via IntersectionObserver ----
+  // Unlike the active-card tracking below, this one is fine as an
+  // observer: it only ever fires once per image, and being a frame or two
+  // late to start loading an image that's about to scroll into view has
+  // no correctness consequence — nothing downstream depends on exactly
+  // when it fires the way the counter/roadblock used to.
   const imgObserver = new IntersectionObserver(
     (entries, obs) => {
       entries.forEach((entry) => {
@@ -195,32 +200,26 @@
     });
   }
 
-  // ---- active section tracking (counter, year rail, and which card's
-  // fixed art layer is showing) ----
-  // Exactly one .event ever gets .active at a time — tracked explicitly in
-  // JS (not left to CSS/layout), which is what guarantees only one art
-  // layer is ever visible: the previous active card's class is removed in
-  // the same tick the new one's is added, so there's no window where two
-  // could both be considered "active."
+  // ---- single source of truth: a plain slide index, never inferred from
+  // scroll geometry ----
+  // Every bug chased this session traced back to the same root cause:
+  // trying to answer "what card are we on" by measuring the DOM (an
+  // IntersectionObserver ratio, a live getBoundingClientRect() check)
+  // WHILE the page is actively scrolling. At real scroll speed that's
+  // measuring a blur — there's no meaningfully correct answer to "what's
+  // 50% visible right now" mid-motion, so every geometry-based attempt
+  // was at best a plausible guess a fast enough scroll could outrun or a
+  // stale IntersectionObserver batch could contradict.
+  //
+  // currentIdx is instead changed ONLY at discrete, already-settled
+  // moments: a debounced scroll that has genuinely stopped (scheduleSnap
+  // below), a year-rail/button click, or the dedicated endscreen
+  // transition. Nothing ever reads it back from scroll position — it IS
+  // the position, and the counter/active-card/roadblock all read the
+  // exact same variable, so they cannot structurally disagree.
+  let currentIdx = 0;
   let activeSection = null;
-  // Tracks WHICH slide is logically current, independent of scroll pixels
-  // — see the resize listener near the bottom of this file for why that
-  // distinction matters. Updated at every point the code already decides
-  // "we've navigated to X" (observers noticing a crossing, year-rail
-  // clicks, the endscreen transitions, the general snap system landing).
-  let currentTarget = document.getElementById("hero");
-  // Purely for the resize re-anchor — NOT used by the endscreen gate. An
-  // earlier version tried gating the endscreen on currentTarget instead of
-  // geometry, reasoning that geometry samples are leaky. That traded one
-  // leak for a worse one: currentTarget only updates when an
-  // IntersectionObserver callback fires, and those batch/lag behind the
-  // actual wheel events on a fast scroll — so forward wheel events could
-  // sail straight past the last card, unblocked, before the observer ever
-  // caught up to say "you're on it now." See endscreenGate/isOnLastCard
-  // below for the actual (corrected) geometry-based approach.
-  function setCurrentTarget(el) {
-    currentTarget = el;
-  }
+
   function deactivateCurrent() {
     if (!activeSection) return;
     activeSection.classList.remove("active");
@@ -234,120 +233,99 @@
     activeSection = null;
   }
 
-  const sectionObserver = new IntersectionObserver(
-    (entries) => {
-      // The forced endscreen scroll (last card <-> outro) animates straight
-      // through this observer's own thresholds, so its callback fires mid
-      // -transition regardless of who triggered the scroll. Left unguarded,
-      // it would reassert .active/counter/watermark on whatever card the
-      // animated scroll is passing over, fighting the explicit fade
-      // fadeOutMatched()/runEndscreenTransition() just set up — the same
-      // "two independent systems touching shared state" shape that caused
-      // the earlier 2-outros bug. The lock already means this scroll isn't
-      // real user navigation, so this observer has nothing useful to say
-      // until it's over.
-      if (endscreenLocked) return;
-      // A fast scroll (or a year-rail jump across many cards) can cross
-      // several cards' 50% threshold within the same observer callback —
-      // entries aren't guaranteed to be reported in scroll/visual order,
-      // so applying each qualifying one in raw array order let an
-      // earlier, less-visible card "win" last and briefly flash its
-      // (older) year back onto the watermark before the correct one
-      // reasserted itself. Always trust whichever qualifying entry is
-      // actually most visible right now, not just whichever came last.
-      //
-      // "Right now" means freshly measured, not entry.intersectionRatio —
-      // that's a snapshot taken whenever the browser computed it, which
-      // during a fast continuous scroll can already be a frame or more
-      // stale by the time this callback actually runs. A real, confirmed
-      // bug (seen on video): during a fast scroll into the endscreen, the
-      // display would flash back to an EARLIER card for a single frame
-      // right before correctly landing on Kaltsit — a late-delivered batch
-      // carrying an old, stale ratio for that earlier card outranked
-      // Kaltsit's true current state for one callback. Re-measuring each
-      // candidate's live geometry here (via the same visibleRatio() the
-      // endscreen gate uses) instead of trusting the observer's own
-      // snapshot value closes that gap.
-      const qualifying = entries.filter((e) => e.isIntersecting && e.intersectionRatio > 0.5);
-      if (qualifying.length === 0) return;
-      const entry = qualifying.reduce((best, e) =>
-        visibleRatio(e.target.getBoundingClientRect()) > visibleRatio(best.target.getBoundingClientRect()) ? e : best
-      );
+  // The one function allowed to change the DISCRETE state: counter, year
+  // rail, watermark, outro reveal, and the roadblock's arrival stamp.
+  // Called only from the settled moments described above — never from a
+  // raw scroll/wheel event, and never by measuring the DOM to decide
+  // WHICH index to apply (callers already know the index; this just
+  // renders it).
+  //
+  // Deliberately does NOT touch .active/.leaving (which card's fixed art
+  // layer is showing) — that's a separate, purely cosmetic concern now
+  // (see updateVisualCrossfade below). Bundling it in here originally was
+  // an over-broad fix: "the counter shouldn't need visual" was about the
+  // counter and the roadblock specifically, not about the art losing its
+  // continuous scroll-tracking crossfade, which is a different piece of
+  // UX with no reliability problem of its own.
+  function applyState(idx) {
+    const target = snapTargets[idx];
+    if (!target) return;
+    const enteringKaltsit = idx === kaltsitIdx && currentIdx !== kaltsitIdx;
+    currentIdx = idx;
 
-      if (activeSection && activeSection !== entry.target) {
-        deactivateCurrent();
-      }
-      entry.target.classList.remove("leaving");
-      entry.target.classList.add("active");
-      activeSection = entry.target;
-      setCurrentTarget(entry.target);
-      // Safety net: a real .event becoming active means we're definitely
-      // not looking at the outro anymore, regardless of which path (gate
-      // or general snap fallback) got us here. See the matching add-side
-      // safety net in boundaryObserver below for why this can't just be
-      // left to the two dedicated endscreen-transition functions alone.
-      outroEl.classList.remove("revealed");
-
-      const idx = Number(entry.target.dataset.index);
-      const year = Number(entry.target.dataset.year);
-      counterEl.textContent = `${String(idx + 1).padStart(2, "0")} / ${total}`;
-      Object.entries(yearButtons).forEach(([y, btn]) => {
-        btn.classList.toggle("active", Number(y) === year);
-      });
+    if (target.classList.contains("event")) {
+      const i = Number(target.dataset.index);
+      const year = Number(target.dataset.year);
+      counterEl.textContent = `${String(i + 1).padStart(2, "0")} / ${total}`;
+      Object.entries(yearButtons).forEach(([y, btn]) => btn.classList.toggle("active", Number(y) === year));
       renderYearWatermark(year);
       yearWatermarkEl.classList.remove("hidden");
-    },
-    { threshold: [0.5] }
-  );
-  document.querySelectorAll(".event").forEach((sec) => sectionObserver.observe(sec));
+      outroEl.classList.remove("revealed");
+    } else if (target.id === "hero") {
+      yearWatermarkEl.classList.add("hidden");
+      counterEl.textContent = `00 / ${total}`;
+      Object.values(yearButtons).forEach((btn) => btn.classList.remove("active"));
+      outroEl.classList.remove("revealed");
+    } else if (target === outroEl) {
+      yearWatermarkEl.classList.add("hidden");
+      // The outro reads one past total ("132 / 131") rather than
+      // repeating the last card's own "131 / 131" — it's a distinct page,
+      // not a restatement of Kaltsit's count.
+      counterEl.textContent = `${total + 1} / ${total}`;
+      Object.values(yearButtons).forEach((btn) => btn.classList.remove("active"));
+      outroEl.classList.add("revealed");
+    }
 
-  // ---- clear the active card entirely once scrolled into hero or outro ----
-  // sectionObserver above only reacts when a NEW .event crosses 50% — it
-  // never explicitly turns anything off when you scroll away from every
-  // event at once (back up into the hero, or on past the last card into
-  // the outro). Without this, the last-active card's fixed art/text just
-  // stayed on screen indefinitely, bleeding into hero/outro and making
-  // those look unchanged or cluttered instead of being their own clean
-  // page — this is what actually fixes that, not a scroll-position issue.
-  const boundaryEls = [document.getElementById("hero"), document.getElementById("outro")].filter(
-    Boolean
-  );
-  const boundaryObserver = new IntersectionObserver(
-    (entries) => {
-      if (endscreenLocked) return; // same reason as sectionObserver's guard above
-      entries.forEach((entry) => {
-        if (entry.isIntersecting && entry.intersectionRatio > 0.5) {
-          deactivateCurrent();
-          setCurrentTarget(entry.target);
-          yearWatermarkEl.classList.add("hidden");
-          // The outro reads one past total ("132 / 131") rather than
-          // repeating the last card's own "131 / 131" — it's a distinct
-          // page, not a restatement of Kaltsit's count.
-          counterEl.textContent =
-            entry.target.id === "hero" ? `00 / ${total}` : `${total + 1} / ${total}`;
-          Object.values(yearButtons).forEach((btn) => btn.classList.remove("active"));
-          // Safety net, add-side: a fast/large scroll can jump clean over
-          // the last card's whole viewport window between two wheel
-          // samples, so endscreenGate's isNearLastCard() check never fires
-          // true for any single event — the scroll falls through entirely
-          // to the general snap system, which can land squarely on the
-          // outro (nearestSnapTarget picks it, scrollIntoView lands on it)
-          // without ever running through runEndscreenTransition(), the
-          // only place that used to add "revealed". That's the actual
-          // "dead-stop skipped, straight into a dark screen" bug: outro
-          // fully in view, but never marked revealed, so its text/button
-          // stayed at opacity:0. This observer fires off real final
-          // geometry regardless of which path got us here, so tying
-          // "revealed" to it directly (rather than only to the two
-          // dedicated gate functions) closes the gap for good, however
-          // large a single scroll jump was.
-          if (entry.target === outroEl) outroEl.classList.add("revealed");
-        }
-      });
-    },
-    { threshold: [0.5] }
-  );
-  boundaryEls.forEach((el) => boundaryObserver.observe(el));
+    // Stamped here, at the one discrete moment currentIdx actually becomes
+    // Kaltsit — not by watching geometry for an "arrival" crossing.
+    if (enteringKaltsit) lastCardArrivedAt = performance.now();
+  }
+
+  // ---- continuous visual crossfade (cosmetic only) ----
+  // Which card's fixed art/text layer is showing, tracked LIVE as you
+  // scroll — the part of the old behavior that was actually fine and
+  // never needed fixing. Deliberately separate from applyState/currentIdx:
+  // nothing safety-critical (the counter, the roadblock) reads
+  // activeSection, so it doesn't matter that this is a continuous,
+  // best-effort geometry check that could in principle be a frame stale
+  // during a fast scroll — the worst case is a cosmetic flicker, not a
+  // skippable roadblock or a wrong counter, which is what made the OLD
+  // combined version worth removing in the first place.
+  function updateVisualCrossfade() {
+    if (endscreenLocked) return; // don't fight the forced transition's own fade
+    let best = null;
+    let bestRatio = 0.5;
+    document.querySelectorAll(".event").forEach((el) => {
+      const r = visibleRatio(el.getBoundingClientRect());
+      if (r > bestRatio) {
+        bestRatio = r;
+        best = el;
+      }
+    });
+    if (best === activeSection) return;
+    deactivateCurrent();
+    if (best) {
+      best.classList.remove("leaving");
+      best.classList.add("active");
+      activeSection = best;
+    }
+  }
+  function visibleRatio(rect) {
+    if (rect.height <= 0) return 0;
+    const visibleTop = Math.max(rect.top, 0);
+    const visibleBottom = Math.min(rect.bottom, window.innerHeight);
+    const visibleHeight = Math.max(0, visibleBottom - visibleTop);
+    return visibleHeight / rect.height;
+  }
+  window.addEventListener("scroll", updateVisualCrossfade, { passive: true });
+
+  // Explicit navigation entry point (year rail, begin/top buttons): jump
+  // straight to a known index. Named separately from applyState even
+  // though it's a thin wrapper, so call sites read as intent ("go to
+  // this slide") rather than "apply this rendering."
+  function goTo(idx) {
+    applyState(idx);
+  }
 
   // ---- scroll progress bar ----
   function updateProgress() {
@@ -362,12 +340,11 @@
 
   // ---- buttons ----
   document.getElementById("begin-btn").addEventListener("click", () => {
-    const firstEvent = document.querySelector(".event");
-    if (firstEvent) setCurrentTarget(firstEvent);
+    goTo(1); // snapTargets[0] is hero, [1] is the first event
     document.getElementById("events").scrollIntoView({ behavior: "smooth" });
   });
   document.getElementById("top-btn").addEventListener("click", () => {
-    setCurrentTarget(document.getElementById("hero"));
+    goTo(0);
     window.scrollTo({ top: 0, behavior: "smooth" });
   });
 
@@ -376,11 +353,16 @@
   // tick, which is exactly what makes a fast scroll feel interrupted. This
   // only evaluates once real wheel/touch input has been idle for a beat —
   // so a fast wheel-spree never gets nudged mid-motion, only the resting
-  // position gets aligned once you've actually stopped.
+  // position gets aligned once you've actually stopped. That "actually
+  // stopped" moment is also the only time currentIdx is allowed to change
+  // from ordinary scrolling — see applyState's big comment above.
   const outroEl = document.getElementById("outro");
   const snapTargets = [document.getElementById("hero"), ...document.querySelectorAll(".event"), outroEl].filter(
     Boolean
   );
+  const lastEventEl = [...document.querySelectorAll(".event")].pop();
+  const kaltsitIdx = snapTargets.indexOf(lastEventEl);
+  const outroIdx = snapTargets.indexOf(outroEl);
 
   // A guaranteed, fixed-duration scroll — not native scrollIntoView's
   // smooth behavior, whose actual duration varies with distance and isn't
@@ -420,10 +402,7 @@
   // distance" — that requires crossing the halfway point (~50% of a
   // viewport-tall card) before it flips, which felt like it took several
   // wheel ticks to turn a page. This is a flat, card-height-independent
-  // threshold, tuned to roughly 2 wheel ticks on real hardware. Two rounds
-  // of guessing the real per-tick pixel size (200px, then 120px) both
-  // still needed 3 real ticks to clear — dropping with more real margin
-  // this time instead of inching down again.
+  // threshold, tuned to roughly 2 wheel ticks on real hardware.
   const SNAP_COMMIT_PX = 70;
 
   let snapTimer = null;
@@ -443,29 +422,26 @@
       // Small movement: snap back to wherever the gesture started (this is
       // the 2-tick "resist jitter" behavior). Large movement: land on
       // whichever card is ACTUALLY nearest right now, evaluated fresh at
-      // fire-time — not capped at ±1 from the start index. That cap was
-      // the actual bug behind "snaps 20 events back": one long continuous
-      // scroll (no 500ms pause anywhere in it) doesn't fire the debounce
-      // until the very end, by which point the real scroll position could
-      // be many cards past gestureStartIdx — snapping to "1 step from
-      // where it started" meant jumping backward across everything
-      // already scrolled past, instead of just settling where it lands.
-      const targetIdx =
+      // fire-time — not capped at ±1 from the start index, which was the
+      // "snaps 20 events back" bug: a long continuous scroll can land many
+      // cards past where it started, and capping the landing to ±1 meant
+      // jumping backward across everything already scrolled past.
+      let targetIdx =
         Math.abs(delta) <= SNAP_COMMIT_PX ? gestureStartIdx : snapTargets.indexOf(nearestSnapTarget());
+      // The ONLY place a forward move can land past Kaltsit is here, and
+      // only after motion has genuinely stopped (this whole callback only
+      // runs once wheel/touch input has been idle for 500ms) — so this
+      // clamp can't be raced by scroll speed the way a mid-scroll geometry
+      // check could. However fast or far a single continuous gesture that
+      // started at or before Kaltsit ends up going, it settles AT Kaltsit,
+      // never past it — reaching the outro always requires a separate,
+      // later gesture through the dedicated endscreen gate below.
+      if (gestureStartIdx <= kaltsitIdx && targetIdx > kaltsitIdx) targetIdx = kaltsitIdx;
       const target = snapTargets[targetIdx];
-      if (target) setCurrentTarget(target);
       if (target && Math.abs(target.getBoundingClientRect().top) > 4) {
-        // Only strip "revealed" when actually landing somewhere else. A
-        // small nudge up from the outro (under the commit threshold) snaps
-        // BACK onto the outro itself — target === outroEl in that case,
-        // not "leaving" at all — but this used to strip the class
-        // unconditionally, so re-snapping onto the outro from a tiny tick
-        // still went dark right before landing back exactly where it
-        // started. Only reachable now that the reverse direction is plain
-        // free scroll (no gate walling this path off anymore).
-        if (target !== outroEl) outroEl.classList.remove("revealed");
         target.scrollIntoView({ behavior: "smooth", block: "start" });
       }
+      applyState(targetIdx);
       snapTimer = null;
       // 500ms, not 150ms: a slow, deliberate scroller naturally pauses
       // between individual wheel ticks (each notch), and a short debounce
@@ -480,11 +456,10 @@
   // Everywhere else on this page, scrolling is deliberately never
   // intercepted — that's the whole point of the debounced snap above. The
   // last card is explicitly different: it should never budge at all from
-  // ordinary scrolling (not even a partial reveal of the outro creeping
-  // in), right up until 2 ticks commits it — and once committed, nothing
-  // should be able to interrupt the 1s slide into place. That needs
-  // actual preventDefault()-based capture, not just a debounce.
-  const lastEventEl = [...document.querySelectorAll(".event")].pop();
+  // ordinary scrolling, right up until a real gesture commits it — and
+  // once committed, nothing should be able to interrupt the 1s slide into
+  // place. That needs actual preventDefault()-based capture, not just a
+  // debounce.
   const LAST_CARD_HOLD_MS = 5000;
   let endscreenGestureY = 0;
   let endscreenLocked = false;
@@ -516,23 +491,15 @@
 
   function runEndscreenTransition() {
     endscreenLocked = true;
-    setCurrentTarget(outroEl);
-    // Fade out whatever activeSection ACTUALLY currently is, not a
-    // hardcoded lastEventEl. The old isNearLastCard() live geometry check and
-    // activeSection's IntersectionObserver-driven state are two
-    // independently-lagging signals: a fast scroll can have the last card
-    // geometrically in view (satisfying the gate) while the observer
-    // hasn't caught up yet and activeSection still points at the card
-    // BEFORE it. Fading lastEventEl in that case fades a card that was
-    // never active to begin with, leaving the real active card's
-    // position:fixed, z-index:3 text layer bleeding through on top of the
-    // newly-revealed outro underneath -- the "info chunk" showing the
-    // wrong index number on top of "That's the story so far, Doctor."
+    // activeSection is guaranteed to be lastEventEl here: currentIdx can
+    // only have gotten to kaltsitIdx through applyState, which sets
+    // activeSection to snapTargets[kaltsitIdx] === lastEventEl in the same
+    // call — no longer two independently-lagging signals that could
+    // disagree about which card is actually showing.
     fadeOutMatched(activeSection || lastEventEl, 1000);
-    yearWatermarkEl.classList.add("hidden");
     const targetY = window.scrollY + outroEl.getBoundingClientRect().top;
     smoothScrollTo(targetY, 1000);
-    outroEl.classList.add("revealed");
+    applyState(outroIdx);
     setTimeout(() => {
       endscreenLocked = false;
       endscreenGestureY = 0;
@@ -542,104 +509,24 @@
   // Reverse direction (outro back toward the last card) is deliberately
   // plain free scrolling — no forced animation, no lock, no hold. Only the
   // FORWARD approach to the endscreen gets the dead-stop/hold/forced-slide
-  // treatment; leaving it is just like leaving any other card. The general
-  // snap system (scheduleSnap) and the sectionObserver/boundaryObserver
-  // safety nets already handle landing back on the last card and clearing
-  // outro's "revealed" state correctly on their own — see endscreenGate
-  // below, which no longer has a reverse branch at all. Scrolling down
-  // again from anywhere before the last card re-enters the same forward
-  // gate below exactly as it would the first time.
-
-  // Returns true if this wheel event belongs to the endscreen gate (and
-  // has already been fully handled — caller must not also run the general
-  // snap system for it). Returns false for every other case, meaning the
-  // event is the general snap system's to handle, entirely separately.
+  // treatment; leaving it is just like leaving any other card, handled by
+  // the ordinary scheduleSnap settle above.
   //
-  // Live geometry, but corrected from an earlier version: checks
-  // rect.top <= 0 (the last card's top has actually reached/passed the
-  // viewport top — we're genuinely ON it) instead of "any sliver visible
-  // anywhere in the viewport" (rect.top < innerHeight), which fired while
-  // the PREVIOUS card was still mostly on screen — a wall right after
-  // Lemuen, before Kaltsit was ever really arrived at. A version of this
-  // gated on currentTarget (only updated by IntersectionObserver
-  // callbacks) instead, reasoning geometry sampling was inherently leaky —
-  // that traded the early-fire problem for a worse one: observer
-  // callbacks batch/lag behind the actual wheel events on a fast scroll,
-  // so forward wheel events could sail straight past the last card,
-  // completely unblocked, before the observer ever caught up. This version
-  // is synchronous (checked fresh on every wheel event, no observer
-  // involved) so it can't be outrun by scroll speed, AND doesn't fire
-  // until genuinely arrived, so it can't wall off the card before it.
-  // Matches sectionObserver's own threshold ({threshold: [0.5]},
-  // intersectionRatio > 0.5) exactly, in plain geometry — so the roadblock
-  // engages in lockstep with the counter flipping to "131/131", not later.
-  // A previous version required rect.top <= 0 (fully arrived, Kaltsit's
-  // top at/past the viewport top) — correct against the "wall right after
-  // Lemuen" bug, but it left a wide unprotected gap between "counter says
-  // you're on Kaltsit" (50% visible) and "gate actually engages" (~100%
-  // visible), which is exactly the gap a fast wheel spin could clear in a
-  // single event and skip the hold entirely.
-  function visibleRatio(rect) {
-    if (rect.height <= 0) return 0;
-    const visibleTop = Math.max(rect.top, 0);
-    const visibleBottom = Math.min(rect.bottom, window.innerHeight);
-    const visibleHeight = Math.max(0, visibleBottom - visibleTop);
-    return visibleHeight / rect.height;
-  }
-  let wasOnLastCard = false;
-  function isOnLastCard() {
-    return visibleRatio(lastEventEl.getBoundingClientRect()) > 0.5;
-  }
-
+  // Gates on currentIdx === kaltsitIdx — a plain state comparison, not a
+  // geometry check. This is the whole point of the currentIdx rewrite:
+  // the roadblock can never be racing scroll speed to answer "are we on
+  // Kaltsit" because it isn't measuring anything — currentIdx only ever
+  // changes at the discrete, already-settled moments applyState is called
+  // from, and the settle callback above already guarantees a forward
+  // gesture can't land past Kaltsit in one step. By the time currentIdx
+  // says kaltsitIdx, that's already a completed fact, not a snapshot that
+  // could be stale a moment later.
   function endscreenGate(e) {
     if (endscreenLocked) {
       e.preventDefault(); // control stays withheld until the slide finishes
       return true;
     }
-
-    // Even the 50%-visible check above only ever looks at CURRENT
-    // position — it has no way to catch a single wheel event whose deltaY
-    // alone is big enough to carry the scroll from "nowhere near the last
-    // card" to "already scrolled clean past it," because no synchronous
-    // check ever runs while the geometry is actually inside that window —
-    // there simply isn't a discrete moment where isOnLastCard() would have
-    // seen true. This predicts the landing spot from e.deltaY BEFORE the
-    // browser applies it (our listener runs pre-default-action) and, if
-    // it would jump straight from "not yet arrived" to "fully scrolled
-    // past," clamps the scroll to land exactly on the card instead —
-    // turning an ungated flythrough into a normal, gated arrival. Windows'
-    // scroll-acceleration on a fast physical wheel spin can easily produce
-    // a single deltaY larger than half a card's height, which is exactly
-    // what made this reachable in practice, not just in theory.
-    //
-    // MUST use the raw predicted bottom, not visibleRatio() on the
-    // predicted rect: visibleRatio clamps against the viewport bounds, so
-    // "thousands of pixels still ahead of the card" and "thousands of
-    // pixels already past it" both collapse to the same ratio of 0 — a
-    // real bug that shipped once already: it made this fire on almost
-    // EVERY forward scroll anywhere on the site (from card 1, both the
-    // current and predicted ratios are 0, same as a genuine skip-over),
-    // teleporting straight to Kaltsit from anywhere. rect.bottom - deltaY
-    // stays a huge positive number when still genuinely far ahead, and
-    // only actually goes negative when this one event's movement truly
-    // carries the card's bottom edge above the viewport.
-    if (!endscreenLocked && e.deltaY > 0) {
-      const rect = lastEventEl.getBoundingClientRect();
-      const notYetOnIt = visibleRatio(rect) <= 0.5;
-      const predictedBottom = rect.bottom - e.deltaY;
-      if (notYetOnIt && rect.bottom > 0 && predictedBottom <= 0) {
-        e.preventDefault();
-        window.scrollTo(0, window.scrollY + rect.top); // land exactly on it
-        wasOnLastCard = true;
-        lastCardArrivedAt = performance.now();
-        return true;
-      }
-    }
-
-    const onLastCard = isOnLastCard();
-    if (onLastCard && !wasOnLastCard) lastCardArrivedAt = performance.now();
-    wasOnLastCard = onLastCard;
-    if (!onLastCard) return false;
+    if (currentIdx !== kaltsitIdx) return false;
 
     // Forward only: once genuinely on the last card, block further
     // downward scrolling for a deliberate hold (5s, a pacing choice for
@@ -651,11 +538,10 @@
       if (performance.now() - lastCardArrivedAt < LAST_CARD_HOLD_MS) return true;
       // Cancel any snapTimer left pending from BEFORE the last card became
       // active — otherwise it can still fire later (up to 500ms after
-      // whatever wheel event started it) and unconditionally strip
-      // .revealed off the outro, even after this gate's own dedicated
-      // transition just correctly set it. That race — two separate code
-      // paths both able to touch #outro's state — was the actual "2
-      // outros" behavior: the class flipping on/off inconsistently.
+      // whatever wheel event started it) and unconditionally re-apply
+      // whatever it resolves to, potentially fighting this gate's own
+      // transition. That race — two separate code paths both able to
+      // touch state — was the actual "2 outros" behavior from earlier.
       clearTimeout(snapTimer);
       snapTimer = null;
       endscreenGestureY += e.deltaY;
@@ -674,24 +560,29 @@
   window.addEventListener("touchmove", scheduleSnap, { passive: true });
 
   // ---- keep the current slide stable across viewport-height changes ----
-  // Every card is sized with min-height:100vh, and which card is "current"
-  // is ultimately read back from raw scrollY pixels against that geometry.
-  // A viewport-height change — entering/exiting fullscreen, the browser
-  // toolbar hiding, a window resize — changes 100vh itself, which resizes
-  // every card and reflows the document's total height, all without a
-  // single pixel of actual scrolling. The SAME scrollY value then falls
-  // inside a completely different card than before (observed: toggling
-  // fullscreen alone jumped the displayed card from 122/131 to 104/131).
-  // currentTarget (set at every explicit navigation above) is the actual
-  // source of truth for "what slide are we on" — re-anchoring scrollY to
-  // that element's fresh position on resize keeps the visible slide
-  // unchanged instead of reinterpreting a now-stale pixel offset.
+  // Every card is sized with min-height:100vh. A viewport-height change —
+  // entering/exiting fullscreen, the browser toolbar hiding, a window
+  // resize — changes 100vh itself, resizing every card and reflowing the
+  // document's total height, all without a single pixel of actual
+  // scrolling (observed: toggling fullscreen alone used to jump the
+  // displayed card from 122/131 to 104/131 purely from this). Since
+  // currentIdx is real state now, not something read back from scroll
+  // position, fixing this is just: re-scroll to wherever currentIdx's
+  // target actually is post-resize. The index itself never needs to
+  // change here at all.
   let resizeRaf = null;
   window.addEventListener("resize", () => {
     if (resizeRaf) cancelAnimationFrame(resizeRaf);
     resizeRaf = requestAnimationFrame(() => {
-      if (!currentTarget) return;
-      window.scrollTo(0, window.scrollY + currentTarget.getBoundingClientRect().top);
+      const target = snapTargets[currentIdx];
+      if (!target) return;
+      window.scrollTo(0, window.scrollY + target.getBoundingClientRect().top);
     });
   });
+
+  // Correct the initial state once in case the browser restored a non-zero
+  // scroll position (back/forward navigation, a reload mid-page) — one
+  // real, settled measurement taken exactly once at load, not a continuous
+  // poll, same discipline as scheduleSnap's own settle check.
+  applyState(snapTargets.indexOf(nearestSnapTarget()));
 })();
