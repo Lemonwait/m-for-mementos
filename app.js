@@ -217,29 +217,60 @@
     document.getElementById("outro"),
   ].filter(Boolean);
 
+  function nearestSnapTarget() {
+    let nearest = null;
+    let nearestDist = Infinity;
+    snapTargets.forEach((el) => {
+      const dist = Math.abs(el.getBoundingClientRect().top);
+      if (dist < nearestDist) {
+        nearestDist = dist;
+        nearest = el;
+      }
+    });
+    return nearest;
+  }
+
+  // How far (px) you need to move from where THIS gesture started before
+  // it commits to the next/previous card, instead of snapping back to the
+  // one you started on. Deliberately not "whichever card is nearest by raw
+  // distance" — that requires crossing the halfway point (~50% of a
+  // viewport-tall card) before it flips, which felt like it took several
+  // wheel ticks to turn a page. This is a flat, card-height-independent
+  // threshold, tuned to roughly 2 typical wheel ticks.
+  const SNAP_COMMIT_PX = 200;
+
   let snapTimer = null;
+  let gestureStartY = 0;
+  let gestureStartIdx = 0;
   function scheduleSnap() {
+    if (!snapTimer) {
+      // Fresh gesture starting from an already-settled position — record
+      // where it began so later we can measure net movement from HERE,
+      // not just "whatever's closest right now."
+      gestureStartY = window.scrollY;
+      gestureStartIdx = snapTargets.indexOf(nearestSnapTarget());
+    }
     clearTimeout(snapTimer);
     snapTimer = setTimeout(() => {
-      let nearest = null;
-      let nearestDist = Infinity;
-      snapTargets.forEach((el) => {
-        const dist = Math.abs(el.getBoundingClientRect().top);
-        if (dist < nearestDist) {
-          nearestDist = dist;
-          nearest = el;
-        }
-      });
-      if (nearest && nearestDist > 4) {
-        nearest.scrollIntoView({ behavior: "smooth", block: "start" });
+      const delta = window.scrollY - gestureStartY;
+      let targetIdx = gestureStartIdx;
+      if (Math.abs(delta) > SNAP_COMMIT_PX) {
+        targetIdx =
+          delta > 0
+            ? Math.min(gestureStartIdx + 1, snapTargets.length - 1)
+            : Math.max(gestureStartIdx - 1, 0);
       }
+      const target = snapTargets[targetIdx];
+      if (target && Math.abs(target.getBoundingClientRect().top) > 4) {
+        target.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+      snapTimer = null;
       // 500ms, not 150ms: a slow, deliberate scroller naturally pauses
       // between individual wheel ticks (each notch), and a short debounce
-      // treats that natural gap as "done scrolling" — snapping back to
-      // whatever's nearest (usually still the current card, since one or
-      // two ticks alone rarely crosses the halfway point) before they've
-      // had a chance to make enough ticks to actually reach the next one.
-      // This needs to be patient enough to span that inter-tick gap.
+      // treats that natural gap as "done scrolling," evaluating (and
+      // resetting gestureStartY) before they've made enough ticks to
+      // reach the commit threshold above. This needs to be patient enough
+      // to span that inter-tick gap.
     }, 500);
   }
   window.addEventListener("wheel", scheduleSnap, { passive: true });
