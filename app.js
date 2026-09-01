@@ -551,10 +551,23 @@
   // is synchronous (checked fresh on every wheel event, no observer
   // involved) so it can't be outrun by scroll speed, AND doesn't fire
   // until genuinely arrived, so it can't wall off the card before it.
+  // Matches sectionObserver's own threshold ({threshold: [0.5]},
+  // intersectionRatio > 0.5) exactly, in plain geometry — so the roadblock
+  // engages in lockstep with the counter flipping to "131/131", not later.
+  // A previous version required rect.top <= 0 (fully arrived, Kaltsit's
+  // top at/past the viewport top) — correct against the "wall right after
+  // Lemuen" bug, but it left a wide unprotected gap between "counter says
+  // you're on Kaltsit" (50% visible) and "gate actually engages" (~100%
+  // visible), which is exactly the gap a fast wheel spin could clear in a
+  // single event and skip the hold entirely.
   let wasOnLastCard = false;
   function isOnLastCard() {
     const rect = lastEventEl.getBoundingClientRect();
-    return rect.top <= 0 && rect.bottom > 0;
+    if (rect.height <= 0) return false;
+    const visibleTop = Math.max(rect.top, 0);
+    const visibleBottom = Math.min(rect.bottom, window.innerHeight);
+    const visibleHeight = Math.max(0, visibleBottom - visibleTop);
+    return visibleHeight / rect.height > 0.5;
   }
 
   function endscreenGate(e) {
