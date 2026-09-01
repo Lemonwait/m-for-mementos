@@ -362,22 +362,8 @@
       }
       const target = snapTargets[targetIdx];
       if (target && Math.abs(target.getBoundingClientRect().top) > 4) {
-        if (target.id === "outro") {
-          // Endscreen only: a forced, fixed-duration commit — not native
-          // scrollIntoView's smooth behavior, whose actual duration varies
-          // with distance. This always takes exactly 1s and always lands
-          // precisely on target, and reveals the outro's own text/button
-          // in that same moment — they stay at opacity:0 the rest of the
-          // time (see #outro.revealed in style.css), so nothing "teases"
-          // in early just because ordinary scrolling nudged #outro's box
-          // partway into view before this actually committed to it.
-          const targetY = window.scrollY + target.getBoundingClientRect().top;
-          smoothScrollTo(targetY, 1000);
-          target.classList.add("revealed");
-        } else {
-          outroEl.classList.remove("revealed"); // leaving the endscreen
-          target.scrollIntoView({ behavior: "smooth", block: "start" });
-        }
+        outroEl.classList.remove("revealed"); // leaving the endscreen
+        target.scrollIntoView({ behavior: "smooth", block: "start" });
       }
       snapTimer = null;
       // 500ms, not 150ms: a slow, deliberate scroller naturally pauses
@@ -388,6 +374,48 @@
       // to span that inter-tick gap.
     }, 500);
   }
-  window.addEventListener("wheel", scheduleSnap, { passive: true });
+
+  // ---- endscreen dead-end: hard exception to "never block scroll" ----
+  // Everywhere else on this page, scrolling is deliberately never
+  // intercepted — that's the whole point of the debounced snap above. The
+  // last card is explicitly different: it should never budge at all from
+  // ordinary scrolling (not even a partial reveal of the outro creeping
+  // in), right up until 2 ticks commits it — and once committed, nothing
+  // should be able to interrupt the 1s slide into place. That needs
+  // actual preventDefault()-based capture, not just a debounce.
+  const lastEventEl = [...document.querySelectorAll(".event")].pop();
+  let endscreenGestureY = 0;
+  let endscreenLocked = false;
+
+  function runEndscreenTransition() {
+    endscreenLocked = true;
+    deactivateCurrent();
+    yearWatermarkEl.classList.add("hidden");
+    const targetY = window.scrollY + outroEl.getBoundingClientRect().top;
+    smoothScrollTo(targetY, 1000);
+    outroEl.classList.add("revealed");
+    setTimeout(() => {
+      endscreenLocked = false;
+      endscreenGestureY = 0;
+    }, 1000);
+  }
+
+  function onWheel(e) {
+    if (endscreenLocked) {
+      e.preventDefault(); // control stays withheld until the slide finishes
+      return;
+    }
+    // Only forward motion (deltaY > 0) gets captured — scrolling back up
+    // off the last card still works through the normal snap system below.
+    if (activeSection === lastEventEl && e.deltaY > 0) {
+      endscreenGestureY += e.deltaY;
+      e.preventDefault();
+      if (endscreenGestureY > SNAP_COMMIT_PX) runEndscreenTransition();
+      return;
+    }
+    endscreenGestureY = 0;
+    scheduleSnap();
+  }
+  window.addEventListener("wheel", onWheel, { passive: false });
   window.addEventListener("touchmove", scheduleSnap, { passive: true });
 })();
