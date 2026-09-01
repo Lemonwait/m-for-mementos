@@ -281,31 +281,48 @@
       }
     });
 
-    if (best !== activeSection) {
-      deactivateCurrent();
-      if (best) {
+    if (best) {
+      if (best !== activeSection) {
+        deactivateCurrent();
         best.classList.remove("leaving");
         best.classList.add("active");
         activeSection = best;
       }
-    }
-
-    if (best) {
       const i = Number(best.dataset.index);
       const year = Number(best.dataset.year);
       counterEl.textContent = `${String(i + 1).padStart(2, "0")} / ${total}`;
       Object.entries(yearButtons).forEach(([y, btn]) => btn.classList.toggle("active", Number(y) === year));
       renderYearWatermark(year);
       yearWatermarkEl.classList.remove("hidden");
-    } else {
+      return;
+    }
+
+    // No event card is >50% visible. That's ambiguous by itself — it's
+    // true both at the genuine hero/outro boundaries AND during a
+    // transient overshoot (e.g. momentum carrying the raw scroll position
+    // briefly past the last card before scheduleSnap's own clamp settles
+    // it back onto Kaltsit, which is expected and happens on every card
+    // -to-card move, not just this one). Blindly showing the outro's
+    // blank layout whenever nothing else matched was exactly the bug: the
+    // roadblock's hold blocks forward SCROLLING, but a little residual
+    // motion can still land in this gap, and the ending's empty screen
+    // would flash on for a frame before "snapping back" — a tease this
+    // site has always deliberately avoided. Showing hero/outro is now
+    // gated on ACTUALLY being there by both geometry and (for the outro
+    // specifically) having genuinely committed via currentIdx — anything
+    // else leaves the display exactly as it already was.
+    const heroRatio = visibleRatio(document.getElementById("hero").getBoundingClientRect());
+    const outroRatio = visibleRatio(outroEl.getBoundingClientRect());
+    if (heroRatio > 0.5) {
+      deactivateCurrent();
       yearWatermarkEl.classList.add("hidden");
       Object.values(yearButtons).forEach((btn) => btn.classList.remove("active"));
-      // Past the last card (heading toward/at the outro) reads one past
-      // total ("132 / 131") rather than repeating Kaltsit's own count;
-      // before the first card (still in the hero) reads "00".
-      const rect = outroEl.getBoundingClientRect();
-      counterEl.textContent =
-        rect.top < window.innerHeight ? `${total + 1} / ${total}` : `00 / ${total}`;
+      counterEl.textContent = `00 / ${total}`;
+    } else if (outroRatio > 0.5 && currentIdx === outroIdx) {
+      deactivateCurrent();
+      yearWatermarkEl.classList.add("hidden");
+      Object.values(yearButtons).forEach((btn) => btn.classList.remove("active"));
+      counterEl.textContent = `${total + 1} / ${total}`;
     }
   }
   function visibleRatio(rect) {
@@ -526,14 +543,29 @@
     }
     if (currentIdx !== kaltsitIdx) return false;
 
-    // Forward only: once genuinely on the last card, block further
-    // downward scrolling for a deliberate hold (5s, a pacing choice for
-    // the finale, not just enough to block overshoot) before the ending
-    // can trigger. Scrolling back up off the last card is left alone —
-    // ordinary free scroll, same as everywhere else.
+    // While the hold is actively counting down: a FULL lock, both
+    // directions, not just forward. An earlier version only blocked
+    // forward scrolling and left reverse free during the hold — that gap
+    // was enough for a little residual scroll motion (some browsers still
+    // let a small amount bleed through despite preventDefault on rapid
+    // wheel input) to nudge the raw scroll position, which the continuous
+    // display tracker could briefly read as "past everything" before the
+    // general snap system corrected it back — a flash of the blank ending
+    // layout mid-hold. Locking both directions for the hold's duration
+    // removes the gap outright instead of trying to paper over its
+    // symptom. Reverse becomes free again the moment the hold ends,
+    // same as before.
+    if (performance.now() - lastCardArrivedAt < LAST_CARD_HOLD_MS) {
+      e.preventDefault();
+      return true;
+    }
+
+    // Forward only, once the hold has ended: block further downward
+    // scrolling until enough gesture accumulates to commit. Scrolling
+    // back up off the last card is free — ordinary scroll, same as
+    // everywhere else.
     if (e.deltaY > 0) {
       e.preventDefault();
-      if (performance.now() - lastCardArrivedAt < LAST_CARD_HOLD_MS) return true;
       // Cancel any snapTimer left pending from BEFORE the last card became
       // active — otherwise it can still fire later (up to 500ms after
       // whatever wheel event started it) and unconditionally re-apply
