@@ -14,12 +14,6 @@
 
 html{
   scroll-behavior: smooth;
-  /* Native scroll-snap, not a JS wheel-hijack slider: it settles into the
-     nearest card on its own, but never blocks or queues further input the
-     way libraries like Swiper do — a fast scroll/fling just keeps moving
-     through several cards smoothly instead of locking until one
-     transition finishes. */
-  scroll-snap-type: y mandatory;
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
@@ -147,7 +141,6 @@ body{
   align-items: center;
   justify-content: center;
   position: relative;
-  scroll-snap-align: start;
   background:
     radial-gradient(ellipse at 30% 20%, rgba(0,176,255,0.10), transparent 55%),
     radial-gradient(ellipse at 80% 80%, rgba(0,176,255,0.06), transparent 50%),
@@ -232,14 +225,19 @@ body{
 #events{ position: relative; }
 
 .event{
-  position: relative;
-  min-height: 100vh;
+  /* "Stack of cards" via position:sticky, not a JS slider: each card pins
+     to the top of the viewport, and the NEXT card — later in DOM order, so
+     it naturally paints above this one — slides up over it as the user
+     scrolls. This is pure native scroll physically driving the cover, so
+     there's no JS to lock/queue input; a fast scroll or fling just moves
+     straight through several covers in one motion. */
+  position: sticky;
+  top: 0;
+  height: 100vh;
   display: flex;
   align-items: flex-end;
   overflow: hidden;
   border-top: 1px solid var(--line);
-  scroll-snap-align: start;
-  scroll-snap-stop: always;
 }
 
 .event-media{
@@ -425,7 +423,8 @@ a.tag-chip:hover{
   background: var(--bg);
   text-align: center;
   padding: 40px 24px;
-  scroll-snap-align: start;
+  position: relative;
+  z-index: 1;
 }
 .outro-line{
   font-family: var(--font-display);
