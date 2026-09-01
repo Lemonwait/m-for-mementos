@@ -225,26 +225,38 @@ body{
 #events{ position: relative; }
 
 .event{
-  /* "Stack of cards" via position:sticky, not a JS slider: each card pins
-     to the top of the viewport, and the NEXT card — later in DOM order, so
-     it naturally paints above this one — slides up over it as the user
-     scrolls. This is pure native scroll physically driving the cover, so
-     there's no JS to lock/queue input; a fast scroll or fling just moves
-     straight through several covers in one motion. */
-  position: sticky;
-  top: 0;
-  height: 100vh;
+  position: relative;
+  min-height: 100vh;
   display: flex;
   align-items: flex-end;
   overflow: hidden;
   border-top: 1px solid var(--line);
 }
 
+/* Subtle dark fade-in as each card scrolls into view — a plain
+   IntersectionObserver toggling .in-view, no scroll-linked JS math, no
+   locked/blocked input. The page background is already near-black, so
+   fading opacity in from 0 already reads as "fading up out of the dark"
+   without needing a separate overlay layer. */
 .event-media{
   position: absolute;
   inset: 0;
   z-index: 0;
+  opacity: 0;
+  transition: opacity 1.1s ease;
 }
+.event.in-view .event-media{ opacity: 1; }
+
+.event-body{
+  opacity: 0;
+  transform: translateY(16px);
+  transition: opacity 0.9s ease, transform 0.9s ease;
+}
+.event.in-view .event-body{
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .event-media img{
   width: 100%;
   height: 100%;
