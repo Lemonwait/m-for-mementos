@@ -361,12 +361,36 @@ body{
     linear-gradient(to right, rgba(5,7,10,0.55) 0%, rgba(5,7,10,0) 45%);
 }
 
+/* Text pulled out of normal scroll flow the same way the art was: pinned
+   to the viewport, with JS toggling which card's text is showing. Text is
+   much shorter than a 100vh card, so leaving it in normal flow meant most
+   of the scroll-to-next-card distance showed no text at all (just art),
+   then it suddenly appeared right near the end — reading as an abrupt
+   "blink" rather than motion. Outgoing text drifts up and fades out
+   (.leaving), incoming text arrives from just below its resting spot and
+   settles up into place (.active) — both moving upward, matching the
+   "old snaps up, new comes up into place" request. */
 .event-body{
-  position: relative;
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
   z-index: 1;
   width: 100%;
   padding: 0 8vw 64px;
   max-width: 980px;
+  opacity: 0;
+  transform: translateY(28px);
+  transition: opacity 0.6s ease, transform 0.6s ease;
+}
+.event.active .event-body{
+  opacity: 1;
+  transform: translateY(0);
+  z-index: 2;
+}
+.event.leaving .event-body{
+  opacity: 0;
+  transform: translateY(-28px);
 }
 
 .event-index{

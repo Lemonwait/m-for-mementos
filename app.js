@@ -169,7 +169,15 @@
         if (entry.isIntersecting && entry.intersectionRatio > 0.5) {
           if (activeSection && activeSection !== entry.target) {
             activeSection.classList.remove("active");
+            // Text drifts up and fades out rather than just vanishing —
+            // cleared after the transition finishes so the card is back to
+            // its plain "not yet active" resting state (below, invisible)
+            // in case it becomes active again later (e.g. scrolling back).
+            const outgoing = activeSection;
+            outgoing.classList.add("leaving");
+            setTimeout(() => outgoing.classList.remove("leaving"), 650);
           }
+          entry.target.classList.remove("leaving");
           entry.target.classList.add("active");
           activeSection = entry.target;
 
