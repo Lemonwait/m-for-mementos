@@ -215,6 +215,17 @@
 
   const sectionObserver = new IntersectionObserver(
     (entries) => {
+      // The forced endscreen scroll (last card <-> outro) animates straight
+      // through this observer's own thresholds, so its callback fires mid
+      // -transition regardless of who triggered the scroll. Left unguarded,
+      // it would reassert .active/counter/watermark on whatever card the
+      // animated scroll is passing over, fighting the explicit fade
+      // fadeOutMatched()/runEndscreenTransition() just set up — the same
+      // "two independent systems touching shared state" shape that caused
+      // the earlier 2-outros bug. The lock already means this scroll isn't
+      // real user navigation, so this observer has nothing useful to say
+      // until it's over.
+      if (endscreenLocked) return;
       // A fast scroll (or a year-rail jump across many cards) can cross
       // several cards' 50% threshold within the same observer callback —
       // entries aren't guaranteed to be reported in scroll/visual order,
@@ -260,6 +271,7 @@
   );
   const boundaryObserver = new IntersectionObserver(
     (entries) => {
+      if (endscreenLocked) return; // same reason as sectionObserver's guard above
       entries.forEach((entry) => {
         if (entry.isIntersecting && entry.intersectionRatio > 0.5) {
           deactivateCurrent();
