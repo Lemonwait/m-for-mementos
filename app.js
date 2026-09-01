@@ -17,7 +17,10 @@
     btn.addEventListener("click", () => {
       const first = MEMENTOS.find((m) => m.year === year);
       const target = document.getElementById(`event-${first.i}`);
-      if (target) target.scrollIntoView({ behavior: "smooth" });
+      if (target) {
+        currentTarget = target;
+        target.scrollIntoView({ behavior: "smooth" });
+      }
     });
     yearRail.appendChild(btn);
     yearButtons[year] = btn;
@@ -200,6 +203,12 @@
   // the same tick the new one's is added, so there's no window where two
   // could both be considered "active."
   let activeSection = null;
+  // Tracks WHICH slide is logically current, independent of scroll pixels
+  // — see the resize listener near the bottom of this file for why that
+  // distinction matters. Updated at every point the code already decides
+  // "we've navigated to X" (observers noticing a crossing, year-rail
+  // clicks, the endscreen transitions, the general snap system landing).
+  let currentTarget = document.getElementById("hero");
   function deactivateCurrent() {
     if (!activeSection) return;
     activeSection.classList.remove("active");
@@ -244,6 +253,7 @@
       entry.target.classList.remove("leaving");
       entry.target.classList.add("active");
       activeSection = entry.target;
+      currentTarget = entry.target;
       // Safety net: a real .event becoming active means we're definitely
       // not looking at the outro anymore, regardless of which path (gate
       // or general snap fallback) got us here. See the matching add-side
@@ -281,6 +291,7 @@
       entries.forEach((entry) => {
         if (entry.isIntersecting && entry.intersectionRatio > 0.5) {
           deactivateCurrent();
+          currentTarget = entry.target;
           yearWatermarkEl.classList.add("hidden");
           counterEl.textContent = `${entry.target.id === "hero" ? "00" : String(total).padStart(2, "0")} / ${total}`;
           Object.values(yearButtons).forEach((btn) => btn.classList.remove("active"));
@@ -320,9 +331,12 @@
 
   // ---- buttons ----
   document.getElementById("begin-btn").addEventListener("click", () => {
+    const firstEvent = document.querySelector(".event");
+    if (firstEvent) currentTarget = firstEvent;
     document.getElementById("events").scrollIntoView({ behavior: "smooth" });
   });
   document.getElementById("top-btn").addEventListener("click", () => {
+    currentTarget = document.getElementById("hero");
     window.scrollTo({ top: 0, behavior: "smooth" });
   });
 
@@ -408,6 +422,7 @@
       const targetIdx =
         Math.abs(delta) <= SNAP_COMMIT_PX ? gestureStartIdx : snapTargets.indexOf(nearestSnapTarget());
       const target = snapTargets[targetIdx];
+      if (target) currentTarget = target;
       if (target && Math.abs(target.getBoundingClientRect().top) > 4) {
         outroEl.classList.remove("revealed"); // leaving the endscreen
         target.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -461,6 +476,7 @@
 
   function runEndscreenTransition() {
     endscreenLocked = true;
+    currentTarget = outroEl;
     fadeOutMatched(lastEventEl, 1000);
     yearWatermarkEl.classList.add("hidden");
     const targetY = window.scrollY + outroEl.getBoundingClientRect().top;
@@ -485,6 +501,7 @@
   // immediately revealing the outro rather than waiting on a threshold.
   function runReverseEndscreenTransition() {
     endscreenLocked = true;
+    currentTarget = lastEventEl;
     const outroLine = outroEl.querySelector(".outro-line");
     const outroBtn = outroEl.querySelector(".pill-btn");
     [outroLine, outroBtn].forEach((el) => el && (el.style.transitionDuration = "1000ms"));
@@ -581,4 +598,26 @@
   }
   window.addEventListener("wheel", onWheel, { passive: false });
   window.addEventListener("touchmove", scheduleSnap, { passive: true });
+
+  // ---- keep the current slide stable across viewport-height changes ----
+  // Every card is sized with min-height:100vh, and which card is "current"
+  // is ultimately read back from raw scrollY pixels against that geometry.
+  // A viewport-height change — entering/exiting fullscreen, the browser
+  // toolbar hiding, a window resize — changes 100vh itself, which resizes
+  // every card and reflows the document's total height, all without a
+  // single pixel of actual scrolling. The SAME scrollY value then falls
+  // inside a completely different card than before (observed: toggling
+  // fullscreen alone jumped the displayed card from 122/131 to 104/131).
+  // currentTarget (set at every explicit navigation above) is the actual
+  // source of truth for "what slide are we on" — re-anchoring scrollY to
+  // that element's fresh position on resize keeps the visible slide
+  // unchanged instead of reinterpreting a now-stale pixel offset.
+  let resizeRaf = null;
+  window.addEventListener("resize", () => {
+    if (resizeRaf) cancelAnimationFrame(resizeRaf);
+    resizeRaf = requestAnimationFrame(() => {
+      if (!currentTarget) return;
+      window.scrollTo(0, window.scrollY + currentTarget.getBoundingClientRect().top);
+    });
+  });
 })();
