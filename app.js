@@ -270,7 +270,17 @@
   // skippable roadblock, which is what made the discrete rewrite worth
   // doing in the first place.
   function updateDisplay() {
-    if (endscreenLocked) return; // don't fight the forced transition's own fade
+    // Frozen entirely, not just during the 1s forced transition, while
+    // sitting on Kaltsit: "roadblock" means dead stop, art included, not
+    // just scroll position. A continuous wheel spin can still cause a
+    // little residual motion even with the gate's preventDefault (browser
+    // momentum doesn't always fully respect per-event prevention) — if
+    // this tracker keeps reacting to that residual motion, it can shift
+    // .active onto a neighboring card and fade Kaltsit to black mid-wheel,
+    // only settling back once the spin stops. Freezing here instead of
+    // trying to further tighten the lock closes it regardless of how much
+    // residual motion slips through.
+    if (endscreenLocked || currentIdx === kaltsitIdx) return;
     let best = null;
     let bestRatio = 0.5;
     document.querySelectorAll(".event").forEach((el) => {
