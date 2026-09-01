@@ -516,7 +516,14 @@ a.tag-chip:hover{
 
 /* ---------- outro ---------- */
 #outro{
-  min-height: 60vh;
+  /* 100vh, matching the hero — not 60vh. As the very last thing on the
+     page, a shorter trailing section can never actually have its top
+     scrolled to the viewport top: there's nothing below it to scroll
+     into, so the browser clamps at the document's natural end, landing
+     short by exactly the gap (was landing ~320px short of a full
+     "commit"). Matching the hero's height also fits "its own page, same
+     as the front page" better. */
+  min-height: 100vh;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -528,6 +535,22 @@ a.tag-chip:hover{
   position: relative;
   z-index: 1;
 }
+/* Outro content stays fully hidden until the forced 2-tick commit reveals
+   it (see the "endscreen" branch in scheduleSnap) — not just whenever
+   natural scroll happens to bring #outro's own box past 50% visible.
+   Without this it "teased" early: ordinary scrolling toward the last card
+   already nudges #outro into view somewhat, showing this text before the
+   transition had actually committed to it. */
+#outro .outro-line,
+#outro .pill-btn{
+  opacity: 0;
+  transition: opacity 0.8s ease;
+}
+#outro.revealed .outro-line,
+#outro.revealed .pill-btn{
+  opacity: 1;
+}
+
 .outro-line{
   font-family: var(--font-display);
   font-size: clamp(20px, 3vw, 30px);
@@ -544,7 +567,7 @@ a.tag-chip:hover{
   padding: 12px 26px;
   border-radius: 2px;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: background 0.2s ease, color 0.2s ease;
 }
 .pill-btn:hover{
   background: var(--accent);

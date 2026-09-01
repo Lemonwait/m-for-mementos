@@ -290,11 +290,29 @@
   // only evaluates once real wheel/touch input has been idle for a beat —
   // so a fast wheel-spree never gets nudged mid-motion, only the resting
   // position gets aligned once you've actually stopped.
-  const snapTargets = [
-    document.getElementById("hero"),
-    ...document.querySelectorAll(".event"),
-    document.getElementById("outro"),
-  ].filter(Boolean);
+  const outroEl = document.getElementById("outro");
+  const snapTargets = [document.getElementById("hero"), ...document.querySelectorAll(".event"), outroEl].filter(
+    Boolean
+  );
+
+  // A guaranteed, fixed-duration scroll — not native scrollIntoView's
+  // smooth behavior, whose actual duration varies with distance and isn't
+  // fully under our control. This always takes exactly `duration`ms and
+  // always finishes precisely at the target, however far away it starts.
+  function smoothScrollTo(targetY, duration) {
+    const startY = window.scrollY;
+    const delta = targetY - startY;
+    const startTime = performance.now();
+    function ease(t) {
+      return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; // ease-in-out cubic
+    }
+    function step(now) {
+      const elapsed = Math.min((now - startTime) / duration, 1);
+      window.scrollTo(0, startY + delta * ease(elapsed));
+      if (elapsed < 1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  }
 
   function nearestSnapTarget() {
     let nearest = null;
@@ -344,7 +362,22 @@
       }
       const target = snapTargets[targetIdx];
       if (target && Math.abs(target.getBoundingClientRect().top) > 4) {
-        target.scrollIntoView({ behavior: "smooth", block: "start" });
+        if (target.id === "outro") {
+          // Endscreen only: a forced, fixed-duration commit — not native
+          // scrollIntoView's smooth behavior, whose actual duration varies
+          // with distance. This always takes exactly 1s and always lands
+          // precisely on target, and reveals the outro's own text/button
+          // in that same moment — they stay at opacity:0 the rest of the
+          // time (see #outro.revealed in style.css), so nothing "teases"
+          // in early just because ordinary scrolling nudged #outro's box
+          // partway into view before this actually committed to it.
+          const targetY = window.scrollY + target.getBoundingClientRect().top;
+          smoothScrollTo(targetY, 1000);
+          target.classList.add("revealed");
+        } else {
+          outroEl.classList.remove("revealed"); // leaving the endscreen
+          target.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
       }
       snapTimer = null;
       // 500ms, not 150ms: a slow, deliberate scroller naturally pauses
