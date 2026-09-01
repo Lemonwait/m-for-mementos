@@ -253,7 +253,10 @@ body{
   font-size: clamp(90px, 16vw, 240px);
   line-height: 1;
   color: rgba(255,255,255,0.14);
+  opacity: 1;
+  transition: opacity 0.5s ease;
 }
+#year-watermark.hidden{ opacity: 0; }
 .year-digit{
   display: inline-block;
   height: 1em;

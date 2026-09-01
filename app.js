@@ -200,19 +200,25 @@
   // the same tick the new one's is added, so there's no window where two
   // could both be considered "active."
   let activeSection = null;
+  function deactivateCurrent() {
+    if (!activeSection) return;
+    activeSection.classList.remove("active");
+    // Text drifts up and fades out rather than just vanishing — cleared
+    // after the transition finishes so the card is back to its plain "not
+    // yet active" resting state (below, invisible) in case it becomes
+    // active again later (e.g. scrolling back).
+    const outgoing = activeSection;
+    outgoing.classList.add("leaving");
+    setTimeout(() => outgoing.classList.remove("leaving"), 650);
+    activeSection = null;
+  }
+
   const sectionObserver = new IntersectionObserver(
     (entries) => {
       entries.forEach((entry) => {
         if (entry.isIntersecting && entry.intersectionRatio > 0.5) {
           if (activeSection && activeSection !== entry.target) {
-            activeSection.classList.remove("active");
-            // Text drifts up and fades out rather than just vanishing —
-            // cleared after the transition finishes so the card is back to
-            // its plain "not yet active" resting state (below, invisible)
-            // in case it becomes active again later (e.g. scrolling back).
-            const outgoing = activeSection;
-            outgoing.classList.add("leaving");
-            setTimeout(() => outgoing.classList.remove("leaving"), 650);
+            deactivateCurrent();
           }
           entry.target.classList.remove("leaving");
           entry.target.classList.add("active");
@@ -225,12 +231,39 @@
             btn.classList.toggle("active", Number(y) === year);
           });
           renderYearWatermark(year);
+          yearWatermarkEl.classList.remove("hidden");
         }
       });
     },
     { threshold: [0.5] }
   );
   document.querySelectorAll(".event").forEach((sec) => sectionObserver.observe(sec));
+
+  // ---- clear the active card entirely once scrolled into hero or outro ----
+  // sectionObserver above only reacts when a NEW .event crosses 50% — it
+  // never explicitly turns anything off when you scroll away from every
+  // event at once (back up into the hero, or on past the last card into
+  // the outro). Without this, the last-active card's fixed art/text just
+  // stayed on screen indefinitely, bleeding into hero/outro and making
+  // those look unchanged or cluttered instead of being their own clean
+  // page — this is what actually fixes that, not a scroll-position issue.
+  const boundaryEls = [document.getElementById("hero"), document.getElementById("outro")].filter(
+    Boolean
+  );
+  const boundaryObserver = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting && entry.intersectionRatio > 0.5) {
+          deactivateCurrent();
+          yearWatermarkEl.classList.add("hidden");
+          counterEl.textContent = `${entry.target.id === "hero" ? "00" : String(total).padStart(2, "0")} / ${total}`;
+          Object.values(yearButtons).forEach((btn) => btn.classList.remove("active"));
+        }
+      });
+    },
+    { threshold: [0.5] }
+  );
+  boundaryEls.forEach((el) => boundaryObserver.observe(el));
 
   // ---- scroll progress bar ----
   function updateProgress() {
