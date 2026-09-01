@@ -440,16 +440,38 @@
   }
 
   // Reverse direction (outro back to the last card) gets the same forced,
-  // fixed-duration, fully-locked treatment — sectionObserver above still
-  // picks up and re-activates lastEventEl naturally as the scroll passes
-  // through it, so this only needs to handle what nothing else watches:
-  // hiding the outro and driving the scroll itself.
+  // fixed-duration, fully-locked treatment. Does NOT wait for
+  // sectionObserver to notice naturally — that only fires once the scroll
+  // has ALREADY brought lastEventEl past 50% visible, which for a 1000ms
+  // scroll can happen quite late. That gap (art still opacity:0 well past
+  // the transition's halfway point while outro had already faded down)
+  // was the actual "blank black on fast wheel" — the lock stops outside
+  // interference, but never fixed this internal timing gap on its own.
+  // Activating the last card immediately, in the same tick the reverse
+  // starts, closes it — same principle as the forward direction
+  // immediately revealing the outro rather than waiting on a threshold.
   function runReverseEndscreenTransition() {
     endscreenLocked = true;
+    const outroLine = outroEl.querySelector(".outro-line");
+    const outroBtn = outroEl.querySelector(".pill-btn");
+    [outroLine, outroBtn].forEach((el) => el && (el.style.transitionDuration = "1000ms"));
     outroEl.classList.remove("revealed");
+
+    lastEventEl.classList.remove("leaving");
+    lastEventEl.classList.add("active");
+    activeSection = lastEventEl;
+    const idx = Number(lastEventEl.dataset.index);
+    const year = Number(lastEventEl.dataset.year);
+    counterEl.textContent = `${String(idx + 1).padStart(2, "0")} / ${total}`;
+    Object.entries(yearButtons).forEach(([y, btn]) => btn.classList.toggle("active", Number(y) === year));
+    renderYearWatermark(year);
+    yearWatermarkEl.classList.remove("hidden");
+    lastCardArrivedAt = performance.now();
+
     const targetY = window.scrollY + lastEventEl.getBoundingClientRect().top;
     smoothScrollTo(targetY, 1000);
     setTimeout(() => {
+      [outroLine, outroBtn].forEach((el) => el && (el.style.transitionDuration = ""));
       endscreenLocked = false;
       endscreenGestureY = 0;
     }, 1000);
@@ -472,6 +494,15 @@
     if (activeSection === lastEventEl && e.deltaY > 0) {
       e.preventDefault();
       if (performance.now() - lastCardArrivedAt < 500) return true;
+      // Cancel any snapTimer left pending from BEFORE the last card became
+      // active — otherwise it can still fire later (up to 500ms after
+      // whatever wheel event started it) and unconditionally strip
+      // .revealed off the outro, even after this gate's own dedicated
+      // transition just correctly set it. That race — two separate code
+      // paths both able to touch #outro's state — was the actual "2
+      // outros" behavior: the class flipping on/off inconsistently.
+      clearTimeout(snapTimer);
+      snapTimer = null;
       endscreenGestureY += e.deltaY;
       if (endscreenGestureY > SNAP_COMMIT_PX) runEndscreenTransition();
       return true;
@@ -479,6 +510,8 @@
     // Reverse: only while actually viewing the outro.
     if (outroEl.classList.contains("revealed") && e.deltaY < 0) {
       e.preventDefault();
+      clearTimeout(snapTimer);
+      snapTimer = null;
       endscreenGestureY += e.deltaY;
       if (endscreenGestureY < -SNAP_COMMIT_PX) runReverseEndscreenTransition();
       return true;
