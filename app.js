@@ -596,15 +596,23 @@
     // scroll-acceleration on a fast physical wheel spin can easily produce
     // a single deltaY larger than half a card's height, which is exactly
     // what made this reachable in practice, not just in theory.
+    //
+    // MUST use the raw predicted bottom, not visibleRatio() on the
+    // predicted rect: visibleRatio clamps against the viewport bounds, so
+    // "thousands of pixels still ahead of the card" and "thousands of
+    // pixels already past it" both collapse to the same ratio of 0 — a
+    // real bug that shipped once already: it made this fire on almost
+    // EVERY forward scroll anywhere on the site (from card 1, both the
+    // current and predicted ratios are 0, same as a genuine skip-over),
+    // teleporting straight to Kaltsit from anywhere. rect.bottom - deltaY
+    // stays a huge positive number when still genuinely far ahead, and
+    // only actually goes negative when this one event's movement truly
+    // carries the card's bottom edge above the viewport.
     if (!endscreenLocked && e.deltaY > 0) {
       const rect = lastEventEl.getBoundingClientRect();
       const notYetOnIt = visibleRatio(rect) <= 0.5;
-      const predictedRatio = visibleRatio({
-        top: rect.top - e.deltaY,
-        bottom: rect.bottom - e.deltaY,
-        height: rect.height,
-      });
-      if (notYetOnIt && predictedRatio <= 0) {
+      const predictedBottom = rect.bottom - e.deltaY;
+      if (notYetOnIt && rect.bottom > 0 && predictedBottom <= 0) {
         e.preventDefault();
         window.scrollTo(0, window.scrollY + rect.top); // land exactly on it
         wasOnLastCard = true;
