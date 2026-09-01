@@ -305,7 +305,11 @@
           deactivateCurrent();
           setCurrentTarget(entry.target);
           yearWatermarkEl.classList.add("hidden");
-          counterEl.textContent = `${entry.target.id === "hero" ? "00" : String(total).padStart(2, "0")} / ${total}`;
+          // The outro reads one past total ("132 / 131") rather than
+          // repeating the last card's own "131 / 131" — it's a distinct
+          // page, not a restatement of Kaltsit's count.
+          counterEl.textContent =
+            entry.target.id === "hero" ? `00 / ${total}` : `${total + 1} / ${total}`;
           Object.values(yearButtons).forEach((btn) => btn.classList.remove("active"));
           // Safety net, add-side: a fast/large scroll can jump clean over
           // the last card's whole viewport window between two wheel
