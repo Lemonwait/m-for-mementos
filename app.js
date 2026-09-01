@@ -255,9 +255,24 @@
       // (older) year back onto the watermark before the correct one
       // reasserted itself. Always trust whichever qualifying entry is
       // actually most visible right now, not just whichever came last.
+      //
+      // "Right now" means freshly measured, not entry.intersectionRatio —
+      // that's a snapshot taken whenever the browser computed it, which
+      // during a fast continuous scroll can already be a frame or more
+      // stale by the time this callback actually runs. A real, confirmed
+      // bug (seen on video): during a fast scroll into the endscreen, the
+      // display would flash back to an EARLIER card for a single frame
+      // right before correctly landing on Kaltsit — a late-delivered batch
+      // carrying an old, stale ratio for that earlier card outranked
+      // Kaltsit's true current state for one callback. Re-measuring each
+      // candidate's live geometry here (via the same visibleRatio() the
+      // endscreen gate uses) instead of trusting the observer's own
+      // snapshot value closes that gap.
       const qualifying = entries.filter((e) => e.isIntersecting && e.intersectionRatio > 0.5);
       if (qualifying.length === 0) return;
-      const entry = qualifying.reduce((best, e) => (e.intersectionRatio > best.intersectionRatio ? e : best));
+      const entry = qualifying.reduce((best, e) =>
+        visibleRatio(e.target.getBoundingClientRect()) > visibleRatio(best.target.getBoundingClientRect()) ? e : best
+      );
 
       if (activeSection && activeSection !== entry.target) {
         deactivateCurrent();
