@@ -535,6 +535,20 @@ a.tag-chip:hover{
   position: relative;
   z-index: 1;
 }
+/* Collapsed to zero height until the roadblock's delay fires and reveals
+   it. This is what actually makes the last-card roadblock work: with
+   #outro contributing 0px, the document's natural scrollHeight ends
+   exactly at Kaltsit's bottom — there is nowhere to scroll TO, so the
+   browser itself refuses to scroll past it. No JS wheel-event
+   interception needed to enforce the stop; nothing to fight residual
+   scroll momentum on, because the destination genuinely doesn't exist
+   yet. */
+#outro.collapsed{
+  min-height: 0;
+  height: 0;
+  padding: 0;
+  overflow: hidden;
+}
 /* Outro content stays fully hidden until the forced 2-tick commit reveals
    it (see the "endscreen" branch in scheduleSnap) — not just whenever
    natural scroll happens to bring #outro's own box past 50% visible.

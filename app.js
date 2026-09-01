@@ -252,11 +252,15 @@
     const target = snapTargets[idx];
     if (!target) return;
     const enteringKaltsit = idx === kaltsitIdx && currentIdx !== kaltsitIdx;
+    const leavingKaltsit = idx !== kaltsitIdx && currentIdx === kaltsitIdx;
     currentIdx = idx;
     outroEl.classList.toggle("revealed", target === outroEl);
-    // Stamped here, at the one discrete moment currentIdx actually becomes
-    // Kaltsit — not by watching geometry for an "arrival" crossing.
-    if (enteringKaltsit) lastCardArrivedAt = performance.now();
+    // The ending's reveal delay is armed/disarmed here, at the one
+    // discrete moment currentIdx actually becomes (or stops being)
+    // Kaltsit — see scheduleReveal below for why this replaced wheel
+    // -event interception entirely.
+    if (leavingKaltsit) cancelReveal();
+    if (enteringKaltsit) scheduleReveal();
   }
 
   // ---- continuous display tracking (cosmetic only) ----
@@ -281,59 +285,59 @@
     // trying to further tighten the lock closes it regardless of how much
     // residual motion slips through.
     if (endscreenLocked || currentIdx === kaltsitIdx) return;
-    let best = null;
-    let bestRatio = 0.5;
+
+    // Always shows WHICHEVER section is most visible right now, however
+    // small that might be — never requires a minimum (e.g. >50%) before
+    // showing anything. A fixed threshold sounds reasonable but has a real
+    // failure mode: during a genuinely fast continuous scroll, a single
+    // 'scroll' sample can land at a moment where NO section has crossed
+    // 50% at all (each sample can jump past several cards at once), so
+    // nothing would ever qualify — a real black screen for the whole fast
+    // stretch, not just a momentary flicker, only correcting once the
+    // scroll finally slows down enough for something to cross the old
+    // threshold. Comparing raw ratios and always picking the highest,
+    // with no floor, guarantees something reasonable is always shown.
+    const heroEl = document.getElementById("hero");
+    let winner = heroEl;
+    let winnerRatio = visibleRatio(heroEl.getBoundingClientRect());
     document.querySelectorAll(".event").forEach((el) => {
       const r = visibleRatio(el.getBoundingClientRect());
-      if (r > bestRatio) {
-        bestRatio = r;
-        best = el;
+      if (r > winnerRatio) {
+        winnerRatio = r;
+        winner = el;
       }
     });
+    // The outro only ever wins this comparison once genuinely committed
+    // there (currentIdx === outroIdx) — otherwise its empty layout could
+    // tease in early purely because its box happens to be the largest
+    // match during some transient moment, which this site has always
+    // deliberately avoided.
+    const outroRatio = visibleRatio(outroEl.getBoundingClientRect());
+    if (outroRatio > winnerRatio && currentIdx === outroIdx) {
+      winnerRatio = outroRatio;
+      winner = outroEl;
+    }
 
-    if (best) {
-      if (best !== activeSection) {
-        deactivateCurrent();
-        best.classList.remove("leaving");
-        best.classList.add("active");
-        activeSection = best;
-      }
-      const i = Number(best.dataset.index);
-      const year = Number(best.dataset.year);
-      counterEl.textContent = `${String(i + 1).padStart(2, "0")} / ${total}`;
-      Object.entries(yearButtons).forEach(([y, btn]) => btn.classList.toggle("active", Number(y) === year));
-      renderYearWatermark(year);
-      yearWatermarkEl.classList.remove("hidden");
+    if (winner === heroEl || winner === outroEl) {
+      if (activeSection) deactivateCurrent();
+      yearWatermarkEl.classList.add("hidden");
+      Object.values(yearButtons).forEach((btn) => btn.classList.remove("active"));
+      counterEl.textContent = winner === outroEl ? `${total + 1} / ${total}` : `00 / ${total}`;
       return;
     }
 
-    // No event card is >50% visible. That's ambiguous by itself — it's
-    // true both at the genuine hero/outro boundaries AND during a
-    // transient overshoot (e.g. momentum carrying the raw scroll position
-    // briefly past the last card before scheduleSnap's own clamp settles
-    // it back onto Kaltsit, which is expected and happens on every card
-    // -to-card move, not just this one). Blindly showing the outro's
-    // blank layout whenever nothing else matched was exactly the bug: the
-    // roadblock's hold blocks forward SCROLLING, but a little residual
-    // motion can still land in this gap, and the ending's empty screen
-    // would flash on for a frame before "snapping back" — a tease this
-    // site has always deliberately avoided. Showing hero/outro is now
-    // gated on ACTUALLY being there by both geometry and (for the outro
-    // specifically) having genuinely committed via currentIdx — anything
-    // else leaves the display exactly as it already was.
-    const heroRatio = visibleRatio(document.getElementById("hero").getBoundingClientRect());
-    const outroRatio = visibleRatio(outroEl.getBoundingClientRect());
-    if (heroRatio > 0.5) {
+    if (winner !== activeSection) {
       deactivateCurrent();
-      yearWatermarkEl.classList.add("hidden");
-      Object.values(yearButtons).forEach((btn) => btn.classList.remove("active"));
-      counterEl.textContent = `00 / ${total}`;
-    } else if (outroRatio > 0.5 && currentIdx === outroIdx) {
-      deactivateCurrent();
-      yearWatermarkEl.classList.add("hidden");
-      Object.values(yearButtons).forEach((btn) => btn.classList.remove("active"));
-      counterEl.textContent = `${total + 1} / ${total}`;
+      winner.classList.remove("leaving");
+      winner.classList.add("active");
+      activeSection = winner;
     }
+    const i = Number(winner.dataset.index);
+    const year = Number(winner.dataset.year);
+    counterEl.textContent = `${String(i + 1).padStart(2, "0")} / ${total}`;
+    Object.entries(yearButtons).forEach(([y, btn]) => btn.classList.toggle("active", Number(y) === year));
+    renderYearWatermark(year);
+    yearWatermarkEl.classList.remove("hidden");
   }
   function visibleRatio(rect) {
     if (rect.height <= 0) return 0;
@@ -451,17 +455,14 @@
       // "snaps 20 events back" bug: a long continuous scroll can land many
       // cards past where it started, and capping the landing to ±1 meant
       // jumping backward across everything already scrolled past.
-      let targetIdx =
+      // No explicit clamp needed to keep this from landing past Kaltsit:
+      // #outro starts at zero height (.collapsed in style.css) until the
+      // ending's own delay reveals it, so nearestSnapTarget() can never
+      // resolve to it in the first place — there's nothing there to be
+      // "nearest" to yet. The document's own physical scrollHeight is
+      // doing the work a geometry clamp used to have to do by hand.
+      const targetIdx =
         Math.abs(delta) <= SNAP_COMMIT_PX ? gestureStartIdx : snapTargets.indexOf(nearestSnapTarget());
-      // The ONLY place a forward move can land past Kaltsit is here, and
-      // only after motion has genuinely stopped (this whole callback only
-      // runs once wheel/touch input has been idle for 500ms) — so this
-      // clamp can't be raced by scroll speed the way a mid-scroll geometry
-      // check could. However fast or far a single continuous gesture that
-      // started at or before Kaltsit ends up going, it settles AT Kaltsit,
-      // never past it — reaching the outro always requires a separate,
-      // later gesture through the dedicated endscreen gate below.
-      if (gestureStartIdx <= kaltsitIdx && targetIdx > kaltsitIdx) targetIdx = kaltsitIdx;
       const target = snapTargets[targetIdx];
       if (target && Math.abs(target.getBoundingClientRect().top) > 4) {
         target.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -477,18 +478,29 @@
     }, 500);
   }
 
-  // ---- endscreen dead-end: hard exception to "never block scroll" ----
-  // Everywhere else on this page, scrolling is deliberately never
-  // intercepted — that's the whole point of the debounced snap above. The
-  // last card is explicitly different: it should never budge at all from
-  // ordinary scrolling, right up until a real gesture commits it — and
-  // once committed, nothing should be able to interrupt the 1s slide into
-  // place. That needs actual preventDefault()-based capture, not just a
-  // debounce.
-  const LAST_CARD_HOLD_MS = 5000;
-  let endscreenGestureY = 0;
-  let endscreenLocked = false;
-  let lastCardArrivedAt = 0;
+  // ---- the ending: no roadblock, no wheel interception, just physics ----
+  // Every bug this session traced back to blocking scroll with
+  // preventDefault() and then having to defend that block against
+  // residual momentum, browser quirks, and timing races. The actual fix:
+  // stop trying to intercept scrolling at all. #outro starts at zero
+  // height (.collapsed in style.css), so the document's real, physical
+  // scrollHeight ends exactly at Kaltsit's bottom — there is nowhere to
+  // scroll TO. The browser itself refuses to scroll past it, the same
+  // way any page refuses to scroll past its own end, with no JS
+  // involved. After a plain delay spent parked there, the ending reveals
+  // itself: #outro's height is restored, which is the ONLY thing that
+  // makes it reachable, and a forced scroll carries the user into it.
+  const ENDING_DELAY_MS = 5000;
+  let endscreenLocked = false; // only guards the 1s reveal animation itself
+  let revealTimer = null;
+
+  function cancelReveal() {
+    clearTimeout(revealTimer);
+    revealTimer = null;
+  }
+  function scheduleReveal() {
+    revealTimer = setTimeout(revealEnding, ENDING_DELAY_MS);
+  }
 
   // Fades the last card out over the SAME duration as the forced scroll,
   // instead of the generic 650ms deactivateCurrent() uses for ordinary
@@ -514,7 +526,7 @@
     }, duration);
   }
 
-  function runEndscreenTransition() {
+  function revealEnding() {
     endscreenLocked = true;
     // activeSection is guaranteed to be lastEventEl here: currentIdx can
     // only have gotten to kaltsitIdx through applyState, which sets
@@ -522,78 +534,20 @@
     // call — no longer two independently-lagging signals that could
     // disagree about which card is actually showing.
     fadeOutMatched(activeSection || lastEventEl, 1000);
+    outroEl.classList.remove("collapsed"); // grows the document -- the actual "enable"
     const targetY = window.scrollY + outroEl.getBoundingClientRect().top;
     smoothScrollTo(targetY, 1000);
     applyState(outroIdx);
     setTimeout(() => {
       endscreenLocked = false;
-      endscreenGestureY = 0;
     }, 1000);
   }
 
-  // Reverse direction (outro back toward the last card) is deliberately
-  // plain free scrolling — no forced animation, no lock, no hold. Only the
-  // FORWARD approach to the endscreen gets the dead-stop/hold/forced-slide
-  // treatment; leaving it is just like leaving any other card, handled by
-  // the ordinary scheduleSnap settle above.
-  //
-  // Gates on currentIdx === kaltsitIdx — a plain state comparison, not a
-  // geometry check. This is the whole point of the currentIdx rewrite:
-  // the roadblock can never be racing scroll speed to answer "are we on
-  // Kaltsit" because it isn't measuring anything — currentIdx only ever
-  // changes at the discrete, already-settled moments applyState is called
-  // from, and the settle callback above already guarantees a forward
-  // gesture can't land past Kaltsit in one step. By the time currentIdx
-  // says kaltsitIdx, that's already a completed fact, not a snapshot that
-  // could be stale a moment later.
-  function endscreenGate(e) {
-    if (endscreenLocked) {
-      e.preventDefault(); // control stays withheld until the slide finishes
-      return true;
-    }
-    if (currentIdx !== kaltsitIdx) return false;
-
-    // While the hold is actively counting down: a FULL lock, both
-    // directions, not just forward. An earlier version only blocked
-    // forward scrolling and left reverse free during the hold — that gap
-    // was enough for a little residual scroll motion (some browsers still
-    // let a small amount bleed through despite preventDefault on rapid
-    // wheel input) to nudge the raw scroll position, which the continuous
-    // display tracker could briefly read as "past everything" before the
-    // general snap system corrected it back — a flash of the blank ending
-    // layout mid-hold. Locking both directions for the hold's duration
-    // removes the gap outright instead of trying to paper over its
-    // symptom. Reverse becomes free again the moment the hold ends,
-    // same as before.
-    if (performance.now() - lastCardArrivedAt < LAST_CARD_HOLD_MS) {
-      e.preventDefault();
-      return true;
-    }
-
-    // Forward only, once the hold has ended: block further downward
-    // scrolling until enough gesture accumulates to commit. Scrolling
-    // back up off the last card is free — ordinary scroll, same as
-    // everywhere else.
-    if (e.deltaY > 0) {
-      e.preventDefault();
-      // Cancel any snapTimer left pending from BEFORE the last card became
-      // active — otherwise it can still fire later (up to 500ms after
-      // whatever wheel event started it) and unconditionally re-apply
-      // whatever it resolves to, potentially fighting this gate's own
-      // transition. That race — two separate code paths both able to
-      // touch state — was the actual "2 outros" behavior from earlier.
-      clearTimeout(snapTimer);
-      snapTimer = null;
-      endscreenGestureY += e.deltaY;
-      if (endscreenGestureY > SNAP_COMMIT_PX) runEndscreenTransition();
-      return true;
-    }
-    return false;
-  }
-
   function onWheel(e) {
-    if (endscreenGate(e)) return; // endscreen owns this event — general snap never runs
-    endscreenGestureY = 0;
+    if (endscreenLocked) {
+      e.preventDefault(); // control stays withheld until the reveal slide finishes
+      return;
+    }
     scheduleSnap();
   }
   window.addEventListener("wheel", onWheel, { passive: false });
