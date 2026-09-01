@@ -446,6 +446,7 @@
   // should be able to interrupt the 1s slide into place. That needs
   // actual preventDefault()-based capture, not just a debounce.
   const lastEventEl = [...document.querySelectorAll(".event")].pop();
+  const LAST_CARD_HOLD_MS = 5000;
   let endscreenGestureY = 0;
   let endscreenLocked = false;
   let lastCardArrivedAt = 0;
@@ -477,7 +478,18 @@
   function runEndscreenTransition() {
     endscreenLocked = true;
     currentTarget = outroEl;
-    fadeOutMatched(lastEventEl, 1000);
+    // Fade out whatever activeSection ACTUALLY currently is, not a
+    // hardcoded lastEventEl. isNearLastCard()'s live geometry check and
+    // activeSection's IntersectionObserver-driven state are two
+    // independently-lagging signals: a fast scroll can have the last card
+    // geometrically in view (satisfying the gate) while the observer
+    // hasn't caught up yet and activeSection still points at the card
+    // BEFORE it. Fading lastEventEl in that case fades a card that was
+    // never active to begin with, leaving the real active card's
+    // position:fixed, z-index:3 text layer bleeding through on top of the
+    // newly-revealed outro underneath -- the "info chunk" showing the
+    // wrong index number on top of "That's the story so far, Doctor."
+    fadeOutMatched(activeSection || lastEventEl, 1000);
     yearWatermarkEl.classList.add("hidden");
     const targetY = window.scrollY + outroEl.getBoundingClientRect().top;
     smoothScrollTo(targetY, 1000);
@@ -507,6 +519,13 @@
     [outroLine, outroBtn].forEach((el) => el && (el.style.transitionDuration = "1000ms"));
     outroEl.classList.remove("revealed");
 
+    // Same reasoning as the forward direction's fadeOutMatched(activeSection)
+    // above: activeSection can be stale (pointing at some earlier card) by
+    // the time this fires. Overwriting the variable below without first
+    // clearing ITS class would leave that stale card's fixed layer bleeding
+    // through too. deactivateCurrent() is a no-op if activeSection is
+    // already null.
+    deactivateCurrent();
     lastEventEl.classList.remove("leaving");
     lastEventEl.classList.add("active");
     activeSection = lastEventEl;
@@ -559,13 +578,15 @@
     wasNearLastCard = nearLastCard;
 
     // Forward: only once actually near the last card, and only after a
-    // 500ms cooldown from the moment it was first reached — without this,
+    // deliberate hold from the moment it was first reached — without this,
     // a fast scroll that lands on the last card mid-momentum could carry
     // straight through into the endscreen without the user ever really
-    // seeing the last card at all.
+    // seeing the last card at all. 5s (not just enough to block overshoot)
+    // is a deliberate pacing choice for the finale: let the last picture
+    // sit before the ending reveals.
     if (nearLastCard && e.deltaY > 0) {
       e.preventDefault();
-      if (performance.now() - lastCardArrivedAt < 500) return true;
+      if (performance.now() - lastCardArrivedAt < LAST_CARD_HOLD_MS) return true;
       // Cancel any snapTimer left pending from BEFORE the last card became
       // active — otherwise it can still fire later (up to 500ms after
       // whatever wheel event started it) and unconditionally strip
