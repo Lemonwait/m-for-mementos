@@ -564,14 +564,16 @@
   // you're on Kaltsit" (50% visible) and "gate actually engages" (~100%
   // visible), which is exactly the gap a fast wheel spin could clear in a
   // single event and skip the hold entirely.
-  let wasOnLastCard = false;
-  function isOnLastCard() {
-    const rect = lastEventEl.getBoundingClientRect();
-    if (rect.height <= 0) return false;
+  function visibleRatio(rect) {
+    if (rect.height <= 0) return 0;
     const visibleTop = Math.max(rect.top, 0);
     const visibleBottom = Math.min(rect.bottom, window.innerHeight);
     const visibleHeight = Math.max(0, visibleBottom - visibleTop);
-    return visibleHeight / rect.height > 0.5;
+    return visibleHeight / rect.height;
+  }
+  let wasOnLastCard = false;
+  function isOnLastCard() {
+    return visibleRatio(lastEventEl.getBoundingClientRect()) > 0.5;
   }
 
   function endscreenGate(e) {
@@ -579,6 +581,38 @@
       e.preventDefault(); // control stays withheld until the slide finishes
       return true;
     }
+
+    // Even the 50%-visible check above only ever looks at CURRENT
+    // position — it has no way to catch a single wheel event whose deltaY
+    // alone is big enough to carry the scroll from "nowhere near the last
+    // card" to "already scrolled clean past it," because no synchronous
+    // check ever runs while the geometry is actually inside that window —
+    // there simply isn't a discrete moment where isOnLastCard() would have
+    // seen true. This predicts the landing spot from e.deltaY BEFORE the
+    // browser applies it (our listener runs pre-default-action) and, if
+    // it would jump straight from "not yet arrived" to "fully scrolled
+    // past," clamps the scroll to land exactly on the card instead —
+    // turning an ungated flythrough into a normal, gated arrival. Windows'
+    // scroll-acceleration on a fast physical wheel spin can easily produce
+    // a single deltaY larger than half a card's height, which is exactly
+    // what made this reachable in practice, not just in theory.
+    if (!endscreenLocked && e.deltaY > 0) {
+      const rect = lastEventEl.getBoundingClientRect();
+      const notYetOnIt = visibleRatio(rect) <= 0.5;
+      const predictedRatio = visibleRatio({
+        top: rect.top - e.deltaY,
+        bottom: rect.bottom - e.deltaY,
+        height: rect.height,
+      });
+      if (notYetOnIt && predictedRatio <= 0) {
+        e.preventDefault();
+        window.scrollTo(0, window.scrollY + rect.top); // land exactly on it
+        wasOnLastCard = true;
+        lastCardArrivedAt = performance.now();
+        return true;
+      }
+    }
+
     const onLastCard = isOnLastCard();
     if (onLastCard && !wasOnLastCard) lastCardArrivedAt = performance.now();
     wasOnLastCard = onLastCard;
