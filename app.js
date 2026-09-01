@@ -253,8 +253,18 @@
     if (!target) return;
     const enteringKaltsit = idx === kaltsitIdx && currentIdx !== kaltsitIdx;
     const leavingKaltsit = idx !== kaltsitIdx && currentIdx === kaltsitIdx;
+    const leavingOutro = idx !== outroIdx && currentIdx === outroIdx;
     currentIdx = idx;
     outroEl.classList.toggle("revealed", target === outroEl);
+    // Re-collapsed the moment you scroll back off it, so reaching it again
+    // requires earning the delay all over again — parking on Kaltsit for
+    // the full wait, not just backtracking one card and immediately
+    // re-approaching. Symmetric with the forward side: this class is what
+    // makes the outro unreachable at all (see style.css), so removing it
+    // only inside revealEnding()'s deliberate reveal, and restoring it
+    // here on exit, keeps "reachable" tied entirely to having actually
+    // waited, never to raw scroll position.
+    if (leavingOutro) outroEl.classList.add("collapsed");
     // The ending's reveal delay is armed/disarmed here, at the one
     // discrete moment currentIdx actually becomes (or stops being)
     // Kaltsit — see scheduleReveal below for why this replaced wheel
