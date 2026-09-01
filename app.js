@@ -242,7 +242,6 @@
       });
       renderYearWatermark(year);
       yearWatermarkEl.classList.remove("hidden");
-      if (entry.target === lastEventEl) lastCardArrivedAt = performance.now();
     },
     { threshold: [0.5] }
   );
@@ -481,17 +480,39 @@
   // has already been fully handled — caller must not also run the general
   // snap system for it). Returns false for every other case, meaning the
   // event is the general snap system's to handle, entirely separately.
+  // Live geometry, not activeSection — activeSection only updates via
+  // IntersectionObserver, which batches/reports asynchronously and can lag
+  // well behind a fast, continuous scroll. Ordinary (non-last) cards never
+  // call preventDefault at all, so during a genuinely fast multi-second
+  // scroll across many cards, the raw scroll position could blow straight
+  // past the last card and into the outro zone before the observer ever
+  // got a chance to report "you've arrived" — the gate never engaged
+  // because it was waiting on a signal that hadn't caught up yet. This
+  // reads the actual current position directly, every time, so there's no
+  // lag possible: true the instant any part of the last card is in the
+  // viewport, well before it's fully "arrived," giving real margin to
+  // catch a fast scroll before it can escape past it.
+  let wasNearLastCard = false;
+  function isNearLastCard() {
+    const rect = lastEventEl.getBoundingClientRect();
+    return rect.top < window.innerHeight && rect.bottom > 0;
+  }
+
   function endscreenGate(e) {
     if (endscreenLocked) {
       e.preventDefault(); // control stays withheld until the slide finishes
       return true;
     }
-    // Forward: only once actually on the last card, and only after a
-    // 500ms cooldown from the moment it became active — without this, a
-    // fast scroll that lands on the last card mid-momentum could carry
+    const nearLastCard = isNearLastCard();
+    if (nearLastCard && !wasNearLastCard) lastCardArrivedAt = performance.now();
+    wasNearLastCard = nearLastCard;
+
+    // Forward: only once actually near the last card, and only after a
+    // 500ms cooldown from the moment it was first reached — without this,
+    // a fast scroll that lands on the last card mid-momentum could carry
     // straight through into the endscreen without the user ever really
     // seeing the last card at all.
-    if (activeSection === lastEventEl && e.deltaY > 0) {
+    if (nearLastCard && e.deltaY > 0) {
       e.preventDefault();
       if (performance.now() - lastCardArrivedAt < 500) return true;
       // Cancel any snapTimer left pending from BEFORE the last card became
