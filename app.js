@@ -215,25 +215,33 @@
 
   const sectionObserver = new IntersectionObserver(
     (entries) => {
-      entries.forEach((entry) => {
-        if (entry.isIntersecting && entry.intersectionRatio > 0.5) {
-          if (activeSection && activeSection !== entry.target) {
-            deactivateCurrent();
-          }
-          entry.target.classList.remove("leaving");
-          entry.target.classList.add("active");
-          activeSection = entry.target;
+      // A fast scroll (or a year-rail jump across many cards) can cross
+      // several cards' 50% threshold within the same observer callback —
+      // entries aren't guaranteed to be reported in scroll/visual order,
+      // so applying each qualifying one in raw array order let an
+      // earlier, less-visible card "win" last and briefly flash its
+      // (older) year back onto the watermark before the correct one
+      // reasserted itself. Always trust whichever qualifying entry is
+      // actually most visible right now, not just whichever came last.
+      const qualifying = entries.filter((e) => e.isIntersecting && e.intersectionRatio > 0.5);
+      if (qualifying.length === 0) return;
+      const entry = qualifying.reduce((best, e) => (e.intersectionRatio > best.intersectionRatio ? e : best));
 
-          const idx = Number(entry.target.dataset.index);
-          const year = Number(entry.target.dataset.year);
-          counterEl.textContent = `${String(idx + 1).padStart(2, "0")} / ${total}`;
-          Object.entries(yearButtons).forEach(([y, btn]) => {
-            btn.classList.toggle("active", Number(y) === year);
-          });
-          renderYearWatermark(year);
-          yearWatermarkEl.classList.remove("hidden");
-        }
+      if (activeSection && activeSection !== entry.target) {
+        deactivateCurrent();
+      }
+      entry.target.classList.remove("leaving");
+      entry.target.classList.add("active");
+      activeSection = entry.target;
+
+      const idx = Number(entry.target.dataset.index);
+      const year = Number(entry.target.dataset.year);
+      counterEl.textContent = `${String(idx + 1).padStart(2, "0")} / ${total}`;
+      Object.entries(yearButtons).forEach(([y, btn]) => {
+        btn.classList.toggle("active", Number(y) === year);
       });
+      renderYearWatermark(year);
+      yearWatermarkEl.classList.remove("hidden");
     },
     { threshold: [0.5] }
   );
