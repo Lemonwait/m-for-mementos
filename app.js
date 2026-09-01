@@ -236,8 +236,13 @@
   // distance" — that requires crossing the halfway point (~50% of a
   // viewport-tall card) before it flips, which felt like it took several
   // wheel ticks to turn a page. This is a flat, card-height-independent
-  // threshold, tuned to roughly 2 typical wheel ticks.
-  const SNAP_COMMIT_PX = 200;
+  // threshold, tuned to roughly 2 wheel ticks. 200px (an assumed ~100px
+  // per tick) turned out to be too high — real-world testing on actual
+  // hardware showed a genuine 2-tick gesture landing around ~200px and
+  // still not committing (had to just barely clear the threshold, so any
+  // undershoot missed it). Lowered with real margin so an actual 2-tick
+  // scroll reliably clears it instead of needing to land exactly on it.
+  const SNAP_COMMIT_PX = 120;
 
   let snapTimer = null;
   let gestureStartY = 0;
