@@ -264,7 +264,13 @@
     // only inside revealEnding()'s deliberate reveal, and restoring it
     // here on exit, keeps "reachable" tied entirely to having actually
     // waited, never to raw scroll position.
-    if (leavingOutro) outroEl.classList.add("collapsed");
+    if (leavingOutro) {
+      outroEl.classList.add("collapsed");
+      // Exiting the endscreen back onto Kaltsit gets the same highlight
+      // sweep as entering it (triggered in revealEnding below) — reserved
+      // for this specific boundary, not ordinary card-to-card scrolling.
+      if (idx === kaltsitIdx) triggerSweep(lastEventEl.querySelector(".event-media"));
+    }
     // The ending's reveal delay is armed/disarmed here, at the one
     // discrete moment currentIdx actually becomes (or stops being)
     // Kaltsit — see scheduleReveal below for why this replaced wheel
@@ -512,6 +518,20 @@
     revealTimer = setTimeout(revealEnding, ENDING_DELAY_MS);
   }
 
+  // Plays the CSS highlight-sweep (see .event-media.sweep in style.css)
+  // once, reserved for the Kaltsit <-> outro boundary specifically, not
+  // ordinary card-to-card scrolling. Removes/re-adds the class (with a
+  // forced reflow in between) so a repeat trigger restarts the animation
+  // instead of no-op'ing because the class was already present, then
+  // cleans up afterward so it doesn't linger as dead markup.
+  function triggerSweep(mediaEl) {
+    if (!mediaEl) return;
+    mediaEl.classList.remove("sweep");
+    void mediaEl.offsetWidth;
+    mediaEl.classList.add("sweep");
+    setTimeout(() => mediaEl.classList.remove("sweep"), 1200);
+  }
+
   // Fades the last card out over the SAME duration as the forced scroll,
   // instead of the generic 650ms deactivateCurrent() uses for ordinary
   // card-to-card moves. .event-media's own CSS transition is only 0.4s —
@@ -543,6 +563,7 @@
     // activeSection to snapTargets[kaltsitIdx] === lastEventEl in the same
     // call — no longer two independently-lagging signals that could
     // disagree about which card is actually showing.
+    triggerSweep(lastEventEl.querySelector(".event-media"));
     fadeOutMatched(activeSection || lastEventEl, 1000);
     outroEl.classList.remove("collapsed"); // grows the document -- the actual "enable"
     const targetY = window.scrollY + outroEl.getBoundingClientRect().top;

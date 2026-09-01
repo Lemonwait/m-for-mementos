@@ -320,14 +320,17 @@ body{
 }
 .event.active .event-media{ opacity: 1; z-index: 1; }
 
-/* Prototype: a moving highlight streak layered on top of the plain
-   crossfade above, triggered once whenever a card becomes active — an
-   original approximation of "something sweeps across as the content
-   changes" rather than a literal copy of any specific site's effect.
-   A diagonal light band travels right-to-left across the art while it
-   fades in, then fades itself out — an @keyframes animation (not a
-   transition) so it plays once per activation and settles at opacity:0
-   instead of leaving a static diagonal highlight sitting on the art. */
+/* A moving highlight streak layered on top of the plain crossfade above
+   — an original approximation of "something sweeps across as the
+   content changes," not a copy of any specific site's effect. Opt-in
+   via .sweep (added/removed by app.js) rather than tied to .active
+   generally: this is reserved for the endscreen transition specifically
+   (Kaltsit <-> outro, both directions), not every ordinary card change
+   — playing it on all 131 cards during normal scrolling was too much.
+   Toned down from the first pass too (lower peak opacity). An
+   @keyframes animation (not a transition) so it plays once per trigger
+   and settles at opacity:0 instead of leaving a static diagonal
+   highlight sitting on the art. */
 .event-media::after{
   content: "";
   position: absolute;
@@ -335,15 +338,15 @@ body{
   z-index: 2;
   pointer-events: none;
   background: linear-gradient(100deg,
-    transparent 42%,
-    rgba(255,255,255,0.16) 49%,
-    rgba(0,176,255,0.22) 50%,
-    rgba(255,255,255,0.16) 51%,
-    transparent 58%);
+    transparent 44%,
+    rgba(255,255,255,0.09) 49%,
+    rgba(0,176,255,0.13) 50%,
+    rgba(255,255,255,0.09) 51%,
+    transparent 56%);
   background-size: 300% 100%;
   opacity: 0;
 }
-.event.active .event-media::after{
+.event-media.sweep::after{
   animation: sweep-highlight 1.1s ease forwards;
 }
 @keyframes sweep-highlight{
