@@ -18,7 +18,7 @@
       const first = MEMENTOS.find((m) => m.year === year);
       const target = document.getElementById(`event-${first.i}`);
       if (target) {
-        currentTarget = target;
+        setCurrentTarget(target);
         target.scrollIntoView({ behavior: "smooth" });
       }
     });
@@ -209,6 +209,18 @@
   // "we've navigated to X" (observers noticing a crossing, year-rail
   // clicks, the endscreen transitions, the general snap system landing).
   let currentTarget = document.getElementById("hero");
+  // Purely for the resize re-anchor — NOT used by the endscreen gate. An
+  // earlier version tried gating the endscreen on currentTarget instead of
+  // geometry, reasoning that geometry samples are leaky. That traded one
+  // leak for a worse one: currentTarget only updates when an
+  // IntersectionObserver callback fires, and those batch/lag behind the
+  // actual wheel events on a fast scroll — so forward wheel events could
+  // sail straight past the last card, unblocked, before the observer ever
+  // caught up to say "you're on it now." See endscreenGate/isOnLastCard
+  // below for the actual (corrected) geometry-based approach.
+  function setCurrentTarget(el) {
+    currentTarget = el;
+  }
   function deactivateCurrent() {
     if (!activeSection) return;
     activeSection.classList.remove("active");
@@ -253,7 +265,7 @@
       entry.target.classList.remove("leaving");
       entry.target.classList.add("active");
       activeSection = entry.target;
-      currentTarget = entry.target;
+      setCurrentTarget(entry.target);
       // Safety net: a real .event becoming active means we're definitely
       // not looking at the outro anymore, regardless of which path (gate
       // or general snap fallback) got us here. See the matching add-side
@@ -291,7 +303,7 @@
       entries.forEach((entry) => {
         if (entry.isIntersecting && entry.intersectionRatio > 0.5) {
           deactivateCurrent();
-          currentTarget = entry.target;
+          setCurrentTarget(entry.target);
           yearWatermarkEl.classList.add("hidden");
           counterEl.textContent = `${entry.target.id === "hero" ? "00" : String(total).padStart(2, "0")} / ${total}`;
           Object.values(yearButtons).forEach((btn) => btn.classList.remove("active"));
@@ -332,11 +344,11 @@
   // ---- buttons ----
   document.getElementById("begin-btn").addEventListener("click", () => {
     const firstEvent = document.querySelector(".event");
-    if (firstEvent) currentTarget = firstEvent;
+    if (firstEvent) setCurrentTarget(firstEvent);
     document.getElementById("events").scrollIntoView({ behavior: "smooth" });
   });
   document.getElementById("top-btn").addEventListener("click", () => {
-    currentTarget = document.getElementById("hero");
+    setCurrentTarget(document.getElementById("hero"));
     window.scrollTo({ top: 0, behavior: "smooth" });
   });
 
@@ -422,9 +434,17 @@
       const targetIdx =
         Math.abs(delta) <= SNAP_COMMIT_PX ? gestureStartIdx : snapTargets.indexOf(nearestSnapTarget());
       const target = snapTargets[targetIdx];
-      if (target) currentTarget = target;
+      if (target) setCurrentTarget(target);
       if (target && Math.abs(target.getBoundingClientRect().top) > 4) {
-        outroEl.classList.remove("revealed"); // leaving the endscreen
+        // Only strip "revealed" when actually landing somewhere else. A
+        // small nudge up from the outro (under the commit threshold) snaps
+        // BACK onto the outro itself — target === outroEl in that case,
+        // not "leaving" at all — but this used to strip the class
+        // unconditionally, so re-snapping onto the outro from a tiny tick
+        // still went dark right before landing back exactly where it
+        // started. Only reachable now that the reverse direction is plain
+        // free scroll (no gate walling this path off anymore).
+        if (target !== outroEl) outroEl.classList.remove("revealed");
         target.scrollIntoView({ behavior: "smooth", block: "start" });
       }
       snapTimer = null;
@@ -477,9 +497,9 @@
 
   function runEndscreenTransition() {
     endscreenLocked = true;
-    currentTarget = outroEl;
+    setCurrentTarget(outroEl);
     // Fade out whatever activeSection ACTUALLY currently is, not a
-    // hardcoded lastEventEl. isNearLastCard()'s live geometry check and
+    // hardcoded lastEventEl. The old isNearLastCard() live geometry check and
     // activeSection's IntersectionObserver-driven state are two
     // independently-lagging signals: a fast scroll can have the last card
     // geometrically in view (satisfying the gate) while the observer
@@ -515,22 +535,26 @@
   // has already been fully handled — caller must not also run the general
   // snap system for it). Returns false for every other case, meaning the
   // event is the general snap system's to handle, entirely separately.
-  // Live geometry, not activeSection — activeSection only updates via
-  // IntersectionObserver, which batches/reports asynchronously and can lag
-  // well behind a fast, continuous scroll. Ordinary (non-last) cards never
-  // call preventDefault at all, so during a genuinely fast multi-second
-  // scroll across many cards, the raw scroll position could blow straight
-  // past the last card and into the outro zone before the observer ever
-  // got a chance to report "you've arrived" — the gate never engaged
-  // because it was waiting on a signal that hadn't caught up yet. This
-  // reads the actual current position directly, every time, so there's no
-  // lag possible: true the instant any part of the last card is in the
-  // viewport, well before it's fully "arrived," giving real margin to
-  // catch a fast scroll before it can escape past it.
-  let wasNearLastCard = false;
-  function isNearLastCard() {
+  //
+  // Live geometry, but corrected from an earlier version: checks
+  // rect.top <= 0 (the last card's top has actually reached/passed the
+  // viewport top — we're genuinely ON it) instead of "any sliver visible
+  // anywhere in the viewport" (rect.top < innerHeight), which fired while
+  // the PREVIOUS card was still mostly on screen — a wall right after
+  // Lemuen, before Kaltsit was ever really arrived at. A version of this
+  // gated on currentTarget (only updated by IntersectionObserver
+  // callbacks) instead, reasoning geometry sampling was inherently leaky —
+  // that traded the early-fire problem for a worse one: observer
+  // callbacks batch/lag behind the actual wheel events on a fast scroll,
+  // so forward wheel events could sail straight past the last card,
+  // completely unblocked, before the observer ever caught up. This version
+  // is synchronous (checked fresh on every wheel event, no observer
+  // involved) so it can't be outrun by scroll speed, AND doesn't fire
+  // until genuinely arrived, so it can't wall off the card before it.
+  let wasOnLastCard = false;
+  function isOnLastCard() {
     const rect = lastEventEl.getBoundingClientRect();
-    return rect.top < window.innerHeight && rect.bottom > 0;
+    return rect.top <= 0 && rect.bottom > 0;
   }
 
   function endscreenGate(e) {
@@ -538,18 +562,17 @@
       e.preventDefault(); // control stays withheld until the slide finishes
       return true;
     }
-    const nearLastCard = isNearLastCard();
-    if (nearLastCard && !wasNearLastCard) lastCardArrivedAt = performance.now();
-    wasNearLastCard = nearLastCard;
+    const onLastCard = isOnLastCard();
+    if (onLastCard && !wasOnLastCard) lastCardArrivedAt = performance.now();
+    wasOnLastCard = onLastCard;
+    if (!onLastCard) return false;
 
-    // Forward: only once actually near the last card, and only after a
-    // deliberate hold from the moment it was first reached — without this,
-    // a fast scroll that lands on the last card mid-momentum could carry
-    // straight through into the endscreen without the user ever really
-    // seeing the last card at all. 5s (not just enough to block overshoot)
-    // is a deliberate pacing choice for the finale: let the last picture
-    // sit before the ending reveals.
-    if (nearLastCard && e.deltaY > 0) {
+    // Forward only: once genuinely on the last card, block further
+    // downward scrolling for a deliberate hold (5s, a pacing choice for
+    // the finale, not just enough to block overshoot) before the ending
+    // can trigger. Scrolling back up off the last card is left alone —
+    // ordinary free scroll, same as everywhere else.
+    if (e.deltaY > 0) {
       e.preventDefault();
       if (performance.now() - lastCardArrivedAt < LAST_CARD_HOLD_MS) return true;
       // Cancel any snapTimer left pending from BEFORE the last card became
