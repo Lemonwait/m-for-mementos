@@ -233,7 +233,14 @@
       if (nearest && nearestDist > 4) {
         nearest.scrollIntoView({ behavior: "smooth", block: "start" });
       }
-    }, 150);
+      // 500ms, not 150ms: a slow, deliberate scroller naturally pauses
+      // between individual wheel ticks (each notch), and a short debounce
+      // treats that natural gap as "done scrolling" — snapping back to
+      // whatever's nearest (usually still the current card, since one or
+      // two ticks alone rarely crosses the halfway point) before they've
+      // had a chance to make enough ticks to actually reach the next one.
+      // This needs to be patient enough to span that inter-tick gap.
+    }, 500);
   }
   window.addEventListener("wheel", scheduleSnap, { passive: true });
   window.addEventListener("touchmove", scheduleSnap, { passive: true });
