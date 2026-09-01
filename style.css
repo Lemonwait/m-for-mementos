@@ -279,13 +279,19 @@ body{
 
 .event{
   /* Plain normal-flow section — text scrolls through it like any ordinary
-     page content. The art is handled entirely separately below. */
+     page content. The art is handled entirely separately below. No
+     border-top here anymore: that was a leftover from when cards were
+     visible scrolling normally in view (a subtle seam between them), but
+     now that they're shown via the fixed-overlay crossfade instead, a
+     normal-flow .event box has no visible content of its own most of the
+     time — so the border just showed up as a stray hairline whenever a
+     section's actual document position crossed the viewport, most
+     noticeably right at the hero/outro boundaries. */
   position: relative;
   min-height: 100vh;
   display: flex;
   align-items: flex-end;
   overflow: hidden;
-  border-top: 1px solid var(--line);
 }
 
 /* One art layer per card, but ALL of them pinned to the viewport via
@@ -516,7 +522,6 @@ a.tag-chip:hover{
   align-items: center;
   justify-content: center;
   gap: 26px;
-  border-top: 1px solid var(--line);
   background: var(--bg);
   text-align: center;
   padding: 40px 24px;
