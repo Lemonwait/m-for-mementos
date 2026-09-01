@@ -242,6 +242,7 @@
       });
       renderYearWatermark(year);
       yearWatermarkEl.classList.remove("hidden");
+      if (entry.target === lastEventEl) lastCardArrivedAt = performance.now();
     },
     { threshold: [0.5] }
   );
@@ -361,13 +362,18 @@
     clearTimeout(snapTimer);
     snapTimer = setTimeout(() => {
       const delta = window.scrollY - gestureStartY;
-      let targetIdx = gestureStartIdx;
-      if (Math.abs(delta) > SNAP_COMMIT_PX) {
-        targetIdx =
-          delta > 0
-            ? Math.min(gestureStartIdx + 1, snapTargets.length - 1)
-            : Math.max(gestureStartIdx - 1, 0);
-      }
+      // Small movement: snap back to wherever the gesture started (this is
+      // the 2-tick "resist jitter" behavior). Large movement: land on
+      // whichever card is ACTUALLY nearest right now, evaluated fresh at
+      // fire-time — not capped at ±1 from the start index. That cap was
+      // the actual bug behind "snaps 20 events back": one long continuous
+      // scroll (no 500ms pause anywhere in it) doesn't fire the debounce
+      // until the very end, by which point the real scroll position could
+      // be many cards past gestureStartIdx — snapping to "1 step from
+      // where it started" meant jumping backward across everything
+      // already scrolled past, instead of just settling where it lands.
+      const targetIdx =
+        Math.abs(delta) <= SNAP_COMMIT_PX ? gestureStartIdx : snapTargets.indexOf(nearestSnapTarget());
       const target = snapTargets[targetIdx];
       if (target && Math.abs(target.getBoundingClientRect().top) > 4) {
         outroEl.classList.remove("revealed"); // leaving the endscreen
@@ -394,10 +400,35 @@
   const lastEventEl = [...document.querySelectorAll(".event")].pop();
   let endscreenGestureY = 0;
   let endscreenLocked = false;
+  let lastCardArrivedAt = 0;
+
+  // Fades the last card out over the SAME duration as the forced scroll,
+  // instead of the generic 650ms deactivateCurrent() uses for ordinary
+  // card-to-card moves. .event-media's own CSS transition is only 0.4s —
+  // with a 1000ms scroll+reveal, that let the art go fully invisible
+  // ~600ms before the outro had actually arrived/finished revealing,
+  // which is what "endscreen sometimes goes full dark" actually was: a
+  // real gap where neither side had anything to show yet. Overriding the
+  // transition-duration inline for just this one fade keeps it matched;
+  // reverting it afterward leaves ordinary transitions at their normal
+  // (faster) speed.
+  function fadeOutMatched(section, duration) {
+    if (!section) return;
+    const media = section.querySelector(".event-media");
+    const body = section.querySelector(".event-body");
+    [media, body].forEach((el) => el && (el.style.transitionDuration = `${duration}ms`));
+    section.classList.remove("active");
+    section.classList.add("leaving");
+    if (activeSection === section) activeSection = null;
+    setTimeout(() => {
+      section.classList.remove("leaving");
+      [media, body].forEach((el) => el && (el.style.transitionDuration = ""));
+    }, duration);
+  }
 
   function runEndscreenTransition() {
     endscreenLocked = true;
-    deactivateCurrent();
+    fadeOutMatched(lastEventEl, 1000);
     yearWatermarkEl.classList.add("hidden");
     const targetY = window.scrollY + outroEl.getBoundingClientRect().top;
     smoothScrollTo(targetY, 1000);
@@ -408,19 +439,55 @@
     }, 1000);
   }
 
-  function onWheel(e) {
+  // Reverse direction (outro back to the last card) gets the same forced,
+  // fixed-duration, fully-locked treatment — sectionObserver above still
+  // picks up and re-activates lastEventEl naturally as the scroll passes
+  // through it, so this only needs to handle what nothing else watches:
+  // hiding the outro and driving the scroll itself.
+  function runReverseEndscreenTransition() {
+    endscreenLocked = true;
+    outroEl.classList.remove("revealed");
+    const targetY = window.scrollY + lastEventEl.getBoundingClientRect().top;
+    smoothScrollTo(targetY, 1000);
+    setTimeout(() => {
+      endscreenLocked = false;
+      endscreenGestureY = 0;
+    }, 1000);
+  }
+
+  // Returns true if this wheel event belongs to the endscreen gate (and
+  // has already been fully handled — caller must not also run the general
+  // snap system for it). Returns false for every other case, meaning the
+  // event is the general snap system's to handle, entirely separately.
+  function endscreenGate(e) {
     if (endscreenLocked) {
       e.preventDefault(); // control stays withheld until the slide finishes
-      return;
+      return true;
     }
-    // Only forward motion (deltaY > 0) gets captured — scrolling back up
-    // off the last card still works through the normal snap system below.
+    // Forward: only once actually on the last card, and only after a
+    // 500ms cooldown from the moment it became active — without this, a
+    // fast scroll that lands on the last card mid-momentum could carry
+    // straight through into the endscreen without the user ever really
+    // seeing the last card at all.
     if (activeSection === lastEventEl && e.deltaY > 0) {
-      endscreenGestureY += e.deltaY;
       e.preventDefault();
+      if (performance.now() - lastCardArrivedAt < 500) return true;
+      endscreenGestureY += e.deltaY;
       if (endscreenGestureY > SNAP_COMMIT_PX) runEndscreenTransition();
-      return;
+      return true;
     }
+    // Reverse: only while actually viewing the outro.
+    if (outroEl.classList.contains("revealed") && e.deltaY < 0) {
+      e.preventDefault();
+      endscreenGestureY += e.deltaY;
+      if (endscreenGestureY < -SNAP_COMMIT_PX) runReverseEndscreenTransition();
+      return true;
+    }
+    return false;
+  }
+
+  function onWheel(e) {
+    if (endscreenGate(e)) return; // endscreen owns this event — general snap never runs
     endscreenGestureY = 0;
     scheduleSnap();
   }
