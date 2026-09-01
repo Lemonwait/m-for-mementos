@@ -238,7 +238,13 @@ body{
   position: fixed;
   left: 8vw;
   bottom: 40px;
-  z-index: 1;
+  /* Explicitly above every art layer's z-index (0/1), not just "in
+     between" — this element sits earlier in the DOM than .event-media
+     (it's outside #events), and tied z-index resolves by DOM order, later
+     wins. That let a fully-opaque active art layer paint completely over
+     this once things settled, so it only ever peeked through briefly
+     during a transition's opacity blend. */
+  z-index: 2;
   display: flex;
   pointer-events: none;
   user-select: none;
@@ -246,7 +252,7 @@ body{
   font-weight: 700;
   font-size: clamp(90px, 16vw, 240px);
   line-height: 1;
-  color: rgba(255,255,255,0.07);
+  color: rgba(255,255,255,0.14);
 }
 .year-digit{
   display: inline-block;
@@ -424,7 +430,11 @@ body{
 .event.active .event-body{
   opacity: 1;
   transform: translateY(0);
-  z-index: 2;
+  /* Unambiguously above the watermark's z-index:2 — not relying on the
+     DOM-order tiebreak (which happens to also favor this, since #events
+     comes after #year-watermark, but that's a fragile thing to depend on
+     given how much trouble a tied/ambiguous z-index caused already). */
+  z-index: 3;
 }
 .event.leaving .event-body{
   opacity: 0;

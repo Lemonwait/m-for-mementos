@@ -58,7 +58,7 @@
       </div>
       <div class="event-body">
         <p class="event-index">${String(m.i + 1).padStart(3, "0")} / ${String(total).padStart(3, "0")}</p>
-        <p class="event-date">${escapeHtml(m.date)}</p>
+        <p class="event-date">${escapeHtml(formatDateShort(m.date))}</p>
         <p class="event-quote">${escapeHtml(m.favorText)}</p>
         <h2 class="event-name">${escapeHtml(m.name)}</h2>
         <div class="event-tags">${tagsHtml}</div>
@@ -75,6 +75,15 @@
   }
   function escapeAttr(str) {
     return escapeHtml(str);
+  }
+  // The big year watermark now covers the year itself, so the small date
+  // line only needs "Mon DD" — strips a trailing ", YYYY". The one entry
+  // whose date is just a bare year ("2017", no month/day at all) has
+  // nothing left to show here once the year's stripped, which is fine:
+  // that year is exactly what the watermark is already displaying.
+  function formatDateShort(dateStr) {
+    const match = dateStr.match(/^(.*),\s*\d{4}$/);
+    return match ? match[1] : "";
   }
 
   // ---- lazy image fade-in via IntersectionObserver ----
