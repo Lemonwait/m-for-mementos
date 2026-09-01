@@ -204,4 +204,37 @@
   document.getElementById("top-btn").addEventListener("click", () => {
     window.scrollTo({ top: 0, behavior: "smooth" });
   });
+
+  // ---- gentle snap-to-card once scrolling has actually settled ----
+  // Deliberately not native CSS scroll-snap: that reacts on every scroll
+  // tick, which is exactly what makes a fast scroll feel interrupted. This
+  // only evaluates once real wheel/touch input has been idle for a beat —
+  // so a fast wheel-spree never gets nudged mid-motion, only the resting
+  // position gets aligned once you've actually stopped.
+  const snapTargets = [
+    document.getElementById("hero"),
+    ...document.querySelectorAll(".event"),
+    document.getElementById("outro"),
+  ].filter(Boolean);
+
+  let snapTimer = null;
+  function scheduleSnap() {
+    clearTimeout(snapTimer);
+    snapTimer = setTimeout(() => {
+      let nearest = null;
+      let nearestDist = Infinity;
+      snapTargets.forEach((el) => {
+        const dist = Math.abs(el.getBoundingClientRect().top);
+        if (dist < nearestDist) {
+          nearestDist = dist;
+          nearest = el;
+        }
+      });
+      if (nearest && nearestDist > 4) {
+        nearest.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }, 150);
+  }
+  window.addEventListener("wheel", scheduleSnap, { passive: true });
+  window.addEventListener("touchmove", scheduleSnap, { passive: true });
 })();
