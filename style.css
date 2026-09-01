@@ -12,7 +12,18 @@
 
 *{ box-sizing: border-box; }
 
-html{ scroll-behavior: smooth; }
+html{
+  scroll-behavior: smooth;
+  /* Native scroll-snap, not a JS wheel-hijack slider: it settles into the
+     nearest card on its own, but never blocks or queues further input the
+     way libraries like Swiper do — a fast scroll/fling just keeps moving
+     through several cards smoothly instead of locking until one
+     transition finishes. */
+  scroll-snap-type: y mandatory;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+html::-webkit-scrollbar{ display: none; }
 
 body{
   margin: 0;
@@ -136,6 +147,7 @@ body{
   align-items: center;
   justify-content: center;
   position: relative;
+  scroll-snap-align: start;
   background:
     radial-gradient(ellipse at 30% 20%, rgba(0,176,255,0.10), transparent 55%),
     radial-gradient(ellipse at 80% 80%, rgba(0,176,255,0.06), transparent 50%),
@@ -226,6 +238,8 @@ body{
   align-items: flex-end;
   overflow: hidden;
   border-top: 1px solid var(--line);
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
 }
 
 .event-media{
@@ -411,6 +425,7 @@ a.tag-chip:hover{
   background: var(--bg);
   text-align: center;
   padding: 40px 24px;
+  scroll-snap-align: start;
 }
 .outro-line{
   font-family: var(--font-display);
