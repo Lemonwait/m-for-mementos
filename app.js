@@ -233,65 +233,43 @@
     activeSection = null;
   }
 
-  // The one function allowed to change the DISCRETE state: counter, year
-  // rail, watermark, outro reveal, and the roadblock's arrival stamp.
-  // Called only from the settled moments described above — never from a
-  // raw scroll/wheel event, and never by measuring the DOM to decide
-  // WHICH index to apply (callers already know the index; this just
-  // renders it).
+  // The one function allowed to change the DISCRETE, safety-critical
+  // state: currentIdx itself, the outro's deliberate reveal, and the
+  // roadblock's arrival stamp. Called only from the settled moments
+  // described above — never from a raw scroll/wheel event, and never by
+  // measuring the DOM to decide WHICH index to apply (callers already
+  // know the index; this just records it).
   //
-  // Deliberately does NOT touch .active/.leaving (which card's fixed art
-  // layer is showing) — that's a separate, purely cosmetic concern now
-  // (see updateVisualCrossfade below). Bundling it in here originally was
-  // an over-broad fix: "the counter shouldn't need visual" was about the
-  // counter and the roadblock specifically, not about the art losing its
-  // continuous scroll-tracking crossfade, which is a different piece of
-  // UX with no reliability problem of its own.
+  // Deliberately does NOT touch the counter, year rail, watermark, or
+  // .active/.leaving — all of that is a display concern, not a safety
+  // one: it should always match whatever's actually on screen, which
+  // means it belongs with the continuous live tracker below, not gated
+  // behind a settle. Bundling display into this function originally was
+  // an over-broad fix — "the counter shouldn't need visual" was really
+  // about the ROADBLOCK's decision-making needing to be reliable, not
+  // about the on-screen number being allowed to lag behind the art.
   function applyState(idx) {
     const target = snapTargets[idx];
     if (!target) return;
     const enteringKaltsit = idx === kaltsitIdx && currentIdx !== kaltsitIdx;
     currentIdx = idx;
-
-    if (target.classList.contains("event")) {
-      const i = Number(target.dataset.index);
-      const year = Number(target.dataset.year);
-      counterEl.textContent = `${String(i + 1).padStart(2, "0")} / ${total}`;
-      Object.entries(yearButtons).forEach(([y, btn]) => btn.classList.toggle("active", Number(y) === year));
-      renderYearWatermark(year);
-      yearWatermarkEl.classList.remove("hidden");
-      outroEl.classList.remove("revealed");
-    } else if (target.id === "hero") {
-      yearWatermarkEl.classList.add("hidden");
-      counterEl.textContent = `00 / ${total}`;
-      Object.values(yearButtons).forEach((btn) => btn.classList.remove("active"));
-      outroEl.classList.remove("revealed");
-    } else if (target === outroEl) {
-      yearWatermarkEl.classList.add("hidden");
-      // The outro reads one past total ("132 / 131") rather than
-      // repeating the last card's own "131 / 131" — it's a distinct page,
-      // not a restatement of Kaltsit's count.
-      counterEl.textContent = `${total + 1} / ${total}`;
-      Object.values(yearButtons).forEach((btn) => btn.classList.remove("active"));
-      outroEl.classList.add("revealed");
-    }
-
+    outroEl.classList.toggle("revealed", target === outroEl);
     // Stamped here, at the one discrete moment currentIdx actually becomes
     // Kaltsit — not by watching geometry for an "arrival" crossing.
     if (enteringKaltsit) lastCardArrivedAt = performance.now();
   }
 
-  // ---- continuous visual crossfade (cosmetic only) ----
-  // Which card's fixed art/text layer is showing, tracked LIVE as you
-  // scroll — the part of the old behavior that was actually fine and
-  // never needed fixing. Deliberately separate from applyState/currentIdx:
-  // nothing safety-critical (the counter, the roadblock) reads
-  // activeSection, so it doesn't matter that this is a continuous,
-  // best-effort geometry check that could in principle be a frame stale
-  // during a fast scroll — the worst case is a cosmetic flicker, not a
-  // skippable roadblock or a wrong counter, which is what made the OLD
-  // combined version worth removing in the first place.
-  function updateVisualCrossfade() {
+  // ---- continuous display tracking (cosmetic only) ----
+  // Which card's fixed art/text layer is showing, the counter, the year
+  // rail, and the watermark — all tracked LIVE as you scroll, same as the
+  // site always did. Deliberately separate from applyState/currentIdx:
+  // nothing safety-critical (the roadblock, the outro's reveal) reads any
+  // of this, so it doesn't matter that it's a continuous, best-effort
+  // geometry check that could in principle be a frame stale during a fast
+  // scroll — the worst case is a cosmetic flicker in a number, not a
+  // skippable roadblock, which is what made the discrete rewrite worth
+  // doing in the first place.
+  function updateDisplay() {
     if (endscreenLocked) return; // don't fight the forced transition's own fade
     let best = null;
     let bestRatio = 0.5;
@@ -302,12 +280,32 @@
         best = el;
       }
     });
-    if (best === activeSection) return;
-    deactivateCurrent();
+
+    if (best !== activeSection) {
+      deactivateCurrent();
+      if (best) {
+        best.classList.remove("leaving");
+        best.classList.add("active");
+        activeSection = best;
+      }
+    }
+
     if (best) {
-      best.classList.remove("leaving");
-      best.classList.add("active");
-      activeSection = best;
+      const i = Number(best.dataset.index);
+      const year = Number(best.dataset.year);
+      counterEl.textContent = `${String(i + 1).padStart(2, "0")} / ${total}`;
+      Object.entries(yearButtons).forEach(([y, btn]) => btn.classList.toggle("active", Number(y) === year));
+      renderYearWatermark(year);
+      yearWatermarkEl.classList.remove("hidden");
+    } else {
+      yearWatermarkEl.classList.add("hidden");
+      Object.values(yearButtons).forEach((btn) => btn.classList.remove("active"));
+      // Past the last card (heading toward/at the outro) reads one past
+      // total ("132 / 131") rather than repeating Kaltsit's own count;
+      // before the first card (still in the hero) reads "00".
+      const rect = outroEl.getBoundingClientRect();
+      counterEl.textContent =
+        rect.top < window.innerHeight ? `${total + 1} / ${total}` : `00 / ${total}`;
     }
   }
   function visibleRatio(rect) {
@@ -317,7 +315,7 @@
     const visibleHeight = Math.max(0, visibleBottom - visibleTop);
     return visibleHeight / rect.height;
   }
-  window.addEventListener("scroll", updateVisualCrossfade, { passive: true });
+  window.addEventListener("scroll", updateDisplay, { passive: true });
 
   // Explicit navigation entry point (year rail, begin/top buttons): jump
   // straight to a known index. Named separately from applyState even
@@ -585,4 +583,5 @@
   // real, settled measurement taken exactly once at load, not a continuous
   // poll, same discipline as scheduleSnap's own settle check.
   applyState(snapTargets.indexOf(nearestSnapTarget()));
+  updateDisplay(); // no 'scroll' event fires on load if scrollY is unchanged
 })();
