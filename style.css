@@ -24,7 +24,13 @@ body{
   background: var(--bg);
   color: var(--ink);
   font-family: var(--font-body);
+  /* overflow-x alone silently computes overflow-y to auto (CSS overflow
+     spec), which turns body into its own scroll container separate from
+     the viewport — that's what was breaking position:sticky above (early
+     cards never released their sticky pin). Pin overflow-y back to
+     visible so html/the viewport stays the one true scrolling context. */
   overflow-x: hidden;
+  overflow-y: visible;
 }
 
 ::selection{ background: var(--accent); color: #001420; }
@@ -225,6 +231,8 @@ body{
 #events{ position: relative; }
 
 .event{
+  /* Plain normal-flow section — text scrolls through it like any ordinary
+     page content. The art is handled entirely separately below. */
   position: relative;
   min-height: 100vh;
   display: flex;
@@ -233,29 +241,22 @@ body{
   border-top: 1px solid var(--line);
 }
 
-/* Subtle dark fade-in as each card scrolls into view — a plain
-   IntersectionObserver toggling .in-view, no scroll-linked JS math, no
-   locked/blocked input. The page background is already near-black, so
-   fading opacity in from 0 already reads as "fading up out of the dark"
-   without needing a separate overlay layer. */
+/* One art layer per card, but ALL of them pinned to the viewport via
+   position:fixed — not sticky. Fixed positioning is computed purely from
+   the viewport, with zero dependency on scroll offset or sibling layout,
+   so there is no way for more than one to seem "stuck" at once (the exact
+   bug two different position:sticky attempts hit). JS toggles .active on
+   exactly one card at a time (see sectionObserver in app.js), so exactly
+   one image is opacity:1 and the rest are invisible underneath it — a
+   plain crossfade, with the art never actually moving. */
 .event-media{
-  position: absolute;
+  position: fixed;
   inset: 0;
   z-index: 0;
   opacity: 0;
   transition: opacity 1.1s ease;
 }
-.event.in-view .event-media{ opacity: 1; }
-
-.event-body{
-  opacity: 0;
-  transform: translateY(16px);
-  transition: opacity 0.9s ease, transform 0.9s ease;
-}
-.event.in-view .event-body{
-  opacity: 1;
-  transform: translateY(0);
-}
+.event.active .event-media{ opacity: 1; z-index: 1; }
 
 .event-media img{
   width: 100%;

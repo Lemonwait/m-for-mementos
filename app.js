@@ -155,25 +155,24 @@
     btn.addEventListener("click", () => mountVideo(btn.closest(".yt-frame")));
   });
 
-  // ---- subtle dark fade-in as each card scrolls into view ----
-  const fadeInObserver = new IntersectionObserver(
-    (entries, obs) => {
-      entries.forEach((entry) => {
-        if (entry.isIntersecting) {
-          entry.target.classList.add("in-view");
-          obs.unobserve(entry.target);
-        }
-      });
-    },
-    { threshold: 0.12 }
-  );
-  document.querySelectorAll(".event").forEach((sec) => fadeInObserver.observe(sec));
-
-  // ---- active section tracking (counter + year rail) ----
+  // ---- active section tracking (counter, year rail, and which card's
+  // fixed art layer is showing) ----
+  // Exactly one .event ever gets .active at a time — tracked explicitly in
+  // JS (not left to CSS/layout), which is what guarantees only one art
+  // layer is ever visible: the previous active card's class is removed in
+  // the same tick the new one's is added, so there's no window where two
+  // could both be considered "active."
+  let activeSection = null;
   const sectionObserver = new IntersectionObserver(
     (entries) => {
       entries.forEach((entry) => {
         if (entry.isIntersecting && entry.intersectionRatio > 0.5) {
+          if (activeSection && activeSection !== entry.target) {
+            activeSection.classList.remove("active");
+          }
+          entry.target.classList.add("active");
+          activeSection = entry.target;
+
           const idx = Number(entry.target.dataset.index);
           const year = Number(entry.target.dataset.year);
           counterEl.textContent = `${String(idx + 1).padStart(2, "0")} / ${total}`;
