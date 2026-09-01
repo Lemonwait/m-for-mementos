@@ -155,6 +155,34 @@
     btn.addEventListener("click", () => mountVideo(btn.closest(".yt-frame")));
   });
 
+  // ---- year watermark: slot-machine digit roll on actual year change ----
+  const yearWatermarkEl = document.getElementById("year-watermark");
+  let shownYear = null;
+  function renderYearWatermark(newYear) {
+    const newStr = String(newYear);
+    const isFirstRender = shownYear === null;
+    const oldStr = isFirstRender ? newStr : String(shownYear);
+    if (!isFirstRender && oldStr === newStr) return; // same year — leave as-is
+    shownYear = newYear;
+
+    yearWatermarkEl.innerHTML = "";
+    for (let i = 0; i < newStr.length; i++) {
+      const oldChar = oldStr[i] ?? newStr[i];
+      const newChar = newStr[i];
+      const slot = document.createElement("span");
+      slot.className = "year-digit";
+      if (oldChar === newChar) {
+        slot.textContent = newChar;
+      } else {
+        slot.innerHTML = `<span class="digit-roll"><span class="d-old">${oldChar}</span><span class="d-new">${newChar}</span></span>`;
+      }
+      yearWatermarkEl.appendChild(slot);
+    }
+    requestAnimationFrame(() => {
+      yearWatermarkEl.querySelectorAll(".digit-roll").forEach((r) => r.classList.add("rolling"));
+    });
+  }
+
   // ---- active section tracking (counter, year rail, and which card's
   // fixed art layer is showing) ----
   // Exactly one .event ever gets .active at a time — tracked explicitly in
@@ -187,6 +215,7 @@
           Object.entries(yearButtons).forEach(([y, btn]) => {
             btn.classList.toggle("active", Number(y) === year);
           });
+          renderYearWatermark(year);
         }
       });
     },

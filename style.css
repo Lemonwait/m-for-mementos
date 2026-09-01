@@ -227,6 +227,44 @@ body{
   50%{ transform: translateY(6px); }
 }
 
+/* ---------- year watermark ---------- */
+/* One persistent element (not per-card) — only re-renders when the active
+   card's year actually differs from what's currently shown, so it stays
+   put across the many consecutive cards that share a year. White, low
+   opacity: a background watermark, not competing with the readable text
+   sitting in front of it. No slide-on-scroll like .event-body — it only
+   ever animates when its own digits change, via the roll below. */
+#year-watermark{
+  position: fixed;
+  left: 8vw;
+  bottom: 40px;
+  z-index: 1;
+  display: flex;
+  pointer-events: none;
+  user-select: none;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(90px, 16vw, 240px);
+  line-height: 1;
+  color: rgba(255,255,255,0.07);
+}
+.year-digit{
+  display: inline-block;
+  height: 1em;
+  overflow: hidden;
+}
+.digit-roll{
+  display: block;
+  transition: transform 0.7s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.digit-roll .d-old,
+.digit-roll .d-new{
+  display: block;
+  height: 1em;
+  line-height: 1;
+}
+.digit-roll.rolling{ transform: translateY(-1em); }
+
 /* ---------- event sections ---------- */
 #events{ position: relative; }
 
