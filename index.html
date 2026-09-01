@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>M for Mementos — Arknights Memory Lane</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Oswald:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="progress-bar"></div>
+
+<header id="top-bar">
+  <div class="topbar-left">
+    <span class="wordmark">M FOR MEMENTOS</span>
+    <span class="subwordmark">明日方舟 · ARKNIGHTS</span>
+  </div>
+  <div class="topbar-right">
+    <span id="counter">00 / 131</span>
+  </div>
+</header>
+
+<nav id="year-rail" aria-label="Jump to year"></nav>
+
+<main id="lane">
+  <section id="hero">
+    <div class="hero-inner">
+      <p class="hero-eyebrow">RHODES ISLAND ARCHIVES</p>
+      <h1 class="hero-title">M FOR<br>MEMENTOS</h1>
+      <div class="hero-rule"></div>
+      <p class="hero-desc">A scroll back through every PV, episode and anniversary since 2017 —
+        the trailers, the losses, the doctor's long walk with Rhodes Island.</p>
+      <p class="hero-spoiler">⚠ SPOILERS WARNING — this archive is arranged in story-release order.</p>
+      <button id="begin-btn" class="scroll-cue" type="button">
+        <span>SCROLL</span>
+        <svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 4v16m0 0l-6-6m6 6l6-6" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+  </section>
+
+  <div id="events"></div>
+
+  <section id="outro">
+    <p class="outro-line">That's the story so far, Doctor.</p>
+    <button id="top-btn" class="pill-btn" type="button">BACK TO TOP</button>
+  </section>
+</main>
+
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
