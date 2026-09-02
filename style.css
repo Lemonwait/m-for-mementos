@@ -497,6 +497,33 @@ body{
   opacity: 0;
   transform: translateY(-28px);
 }
+/* The endscreen swipe's outgoing/incoming side, reserved for Kaltsit
+   specifically (see revealEnding/exitEnding in app.js) — a real
+   translateX motion, not the plain vertical fade/drift every other
+   card-to-card move uses above. .sliding-out and .sliding-in are
+   mutually exclusive with .active/.leaving at the moments they're
+   applied (JS never sets both), but declared after those rules here so
+   they win any specificity tie regardless. */
+.event.sliding-out .event-media,
+.event.sliding-out .event-body{
+  transform: translateX(-100%);
+  opacity: 1;
+  transition: transform 0.9s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.event.sliding-in .event-media,
+.event.sliding-in .event-body{
+  transform: translateX(0);
+  opacity: 1;
+  transition: transform 0.9s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+/* Starting position for the reverse swipe: parked just off-screen to the
+   left before .sliding-in animates it back to translateX(0), mirroring
+   the outro's own off-screen-right resting spot. */
+.event.slide-ready .event-media,
+.event.slide-ready .event-body{
+  transform: translateX(-100%);
+  opacity: 1;
+}
 
 .event-index{
   font-family: var(--font-display);
@@ -563,16 +590,24 @@ a.tag-chip:hover{
 }
 
 /* ---------- outro ---------- */
+/* A permanent fixed full-screen panel, like Kaltsit's own art/text layers
+   — not a normal document-flow section you scroll into. This is what
+   makes the roadblock unconditional rather than something to defend: a
+   position:fixed element contributes NOTHING to the document's
+   scrollHeight, so the page's real, physical scroll bound already ends
+   at Kaltsit — there's nowhere further to scroll, full stop, no JS
+   interception or height tricks needed. Hidden off-screen to the right
+   (translateX(100%)) until revealEnding() swipes it in; swiped back out
+   the same way on exit. Matches the reference: Hypergryph's own site
+   turns out to run on Swiper.js (a standard open-source slider library,
+   not a custom effect) with plain translateX slides at 300ms — this
+   uses a longer, heavier duration (900ms) since it's a one-time finale
+   beat, not a repeated nav action, but the same mechanism: two panels
+   trading places via transform, not a scroll animation. */
 #outro{
-  /* 100vh, matching the hero — not 60vh. As the very last thing on the
-     page, a shorter trailing section can never actually have its top
-     scrolled to the viewport top: there's nothing below it to scroll
-     into, so the browser clamps at the document's natural end, landing
-     short by exactly the gap (was landing ~320px short of a full
-     "commit"). Matching the hero's height also fits "its own page, same
-     as the front page" better. */
-  min-height: 100vh;
-  height: 100vh;
+  position: fixed;
+  inset: 0;
+  z-index: 4;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -581,40 +616,22 @@ a.tag-chip:hover{
   background: var(--bg);
   text-align: center;
   padding: 40px 24px;
-  position: relative;
-  z-index: 1;
-  /* Both explicit values (not relying on min-height alone, which can't
-     transition to/from "auto") so toggling .collapsed grows/shrinks
-     smoothly instead of snapping instantly — matched to revealEnding()'s
-     1s forced-scroll duration in app.js so the reveal reads as one
-     unified motion rather than a height "pop" immediately followed by a
-     separate scroll animation. */
-  transition: height 1s ease, min-height 1s ease, padding 1s ease;
+  transform: translateX(100%);
+  transition: transform 0.9s cubic-bezier(0.22, 0.61, 0.36, 1);
+  pointer-events: none;
 }
-/* Collapsed to zero height until the roadblock's delay fires and reveals
-   it. This is what actually makes the last-card roadblock work: with
-   #outro contributing 0px, the document's natural scrollHeight ends
-   exactly at Kaltsit's bottom — there is nowhere to scroll TO, so the
-   browser itself refuses to scroll past it. No JS wheel-event
-   interception needed to enforce the stop; nothing to fight residual
-   scroll momentum on, because the destination genuinely doesn't exist
-   yet. */
-#outro.collapsed{
-  min-height: 0;
-  height: 0;
-  padding: 0;
-  overflow: hidden;
+#outro.revealed{
+  transform: translateX(0);
+  pointer-events: auto;
 }
-/* Outro content stays fully hidden until the forced 2-tick commit reveals
-   it (see the "endscreen" branch in scheduleSnap) — not just whenever
-   natural scroll happens to bring #outro's own box past 50% visible.
-   Without this it "teased" early: ordinary scrolling toward the last card
-   already nudges #outro into view somewhat, showing this text before the
-   transition had actually committed to it. */
+/* Text fades in only once the slide has mostly settled (delayed start),
+   rather than fading in step with the panel's own motion — keeps the
+   panel itself reading as the primary motion, text as a secondary beat
+   right after it lands. */
 #outro .outro-line,
 #outro .pill-btn{
   opacity: 0;
-  transition: opacity 0.8s ease;
+  transition: opacity 0.4s ease 0.5s;
 }
 #outro.revealed .outro-line,
 #outro.revealed .pill-btn{

@@ -253,28 +253,14 @@
     if (!target) return;
     const enteringKaltsit = idx === kaltsitIdx && currentIdx !== kaltsitIdx;
     const leavingKaltsit = idx !== kaltsitIdx && currentIdx === kaltsitIdx;
-    const leavingOutro = idx !== outroIdx && currentIdx === outroIdx;
     currentIdx = idx;
-    outroEl.classList.toggle("revealed", target === outroEl);
-    // Re-collapsed the moment you scroll back off it, so reaching it again
-    // requires earning the delay all over again — parking on Kaltsit for
-    // the full wait, not just backtracking one card and immediately
-    // re-approaching. Symmetric with the forward side: this class is what
-    // makes the outro unreachable at all (see style.css), so removing it
-    // only inside revealEnding()'s deliberate reveal, and restoring it
-    // here on exit, keeps "reachable" tied entirely to having actually
-    // waited, never to raw scroll position.
-    if (leavingOutro) {
-      outroEl.classList.add("collapsed");
-      // Exiting the endscreen back onto Kaltsit gets the same highlight
-      // sweep as entering it (triggered in revealEnding below) — reserved
-      // for this specific boundary, not ordinary card-to-card scrolling.
-      if (idx === kaltsitIdx) triggerSweep(lastEventEl.querySelector(".event-media"));
-    }
     // The ending's reveal delay is armed/disarmed here, at the one
     // discrete moment currentIdx actually becomes (or stops being)
     // Kaltsit — see scheduleReveal below for why this replaced wheel
-    // -event interception entirely.
+    // -event interception entirely. #outro itself is no longer part of
+    // this index at all (see snapTargets below) -- it's a permanent fixed
+    // overlay now, shown/hidden by revealEnding/exitEnding directly, not
+    // something applyState navigates to.
     if (leavingKaltsit) cancelReveal();
     if (enteringKaltsit) scheduleReveal();
   }
@@ -313,6 +299,9 @@
     // scroll finally slows down enough for something to cross the old
     // threshold. Comparing raw ratios and always picking the highest,
     // with no floor, guarantees something reasonable is always shown.
+    // #outro no longer participates here at all -- it's a permanent fixed
+    // overlay, shown/hidden only by revealEnding/exitEnding directly, so
+    // it can never "win" a visibility comparison it isn't part of.
     const heroEl = document.getElementById("hero");
     let winner = heroEl;
     let winnerRatio = visibleRatio(heroEl.getBoundingClientRect());
@@ -323,22 +312,12 @@
         winner = el;
       }
     });
-    // The outro only ever wins this comparison once genuinely committed
-    // there (currentIdx === outroIdx) — otherwise its empty layout could
-    // tease in early purely because its box happens to be the largest
-    // match during some transient moment, which this site has always
-    // deliberately avoided.
-    const outroRatio = visibleRatio(outroEl.getBoundingClientRect());
-    if (outroRatio > winnerRatio && currentIdx === outroIdx) {
-      winnerRatio = outroRatio;
-      winner = outroEl;
-    }
 
-    if (winner === heroEl || winner === outroEl) {
+    if (winner === heroEl) {
       if (activeSection) deactivateCurrent();
       yearWatermarkEl.classList.add("hidden");
       Object.values(yearButtons).forEach((btn) => btn.classList.remove("active"));
-      counterEl.textContent = winner === outroEl ? `${total + 1} / ${total}` : `00 / ${total}`;
+      counterEl.textContent = `00 / ${total}`;
       return;
     }
 
@@ -389,6 +368,14 @@
     document.getElementById("events").scrollIntoView({ behavior: "smooth" });
   });
   document.getElementById("top-btn").addEventListener("click", () => {
+    // Lives inside #outro, so clicking it needs to actually dismiss the
+    // overlay too, not just scroll the (currently hidden-behind-it) page.
+    // No swipe animation for this one -- jumping all the way back to the
+    // hero is a bigger move than the one-card reverse swipe is built for,
+    // so it just drops straight out.
+    outroEl.classList.remove("revealed");
+    lastEventEl.classList.remove("active", "leaving", "sliding-out", "sliding-in", "slide-ready");
+    if (activeSection === lastEventEl) activeSection = null;
     goTo(0);
     window.scrollTo({ top: 0, behavior: "smooth" });
   });
@@ -402,31 +389,12 @@
   // stopped" moment is also the only time currentIdx is allowed to change
   // from ordinary scrolling — see applyState's big comment above.
   const outroEl = document.getElementById("outro");
-  const snapTargets = [document.getElementById("hero"), ...document.querySelectorAll(".event"), outroEl].filter(
-    Boolean
-  );
+  // #outro deliberately excluded: it's a permanent fixed overlay now (see
+  // style.css), not a document-flow section you scroll into, so it has no
+  // place in a scroll-position-based target list at all.
+  const snapTargets = [document.getElementById("hero"), ...document.querySelectorAll(".event")].filter(Boolean);
   const lastEventEl = [...document.querySelectorAll(".event")].pop();
   const kaltsitIdx = snapTargets.indexOf(lastEventEl);
-  const outroIdx = snapTargets.indexOf(outroEl);
-
-  // A guaranteed, fixed-duration scroll — not native scrollIntoView's
-  // smooth behavior, whose actual duration varies with distance and isn't
-  // fully under our control. This always takes exactly `duration`ms and
-  // always finishes precisely at the target, however far away it starts.
-  function smoothScrollTo(targetY, duration) {
-    const startY = window.scrollY;
-    const delta = targetY - startY;
-    const startTime = performance.now();
-    function ease(t) {
-      return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; // ease-in-out cubic
-    }
-    function step(now) {
-      const elapsed = Math.min((now - startTime) / duration, 1);
-      window.scrollTo(0, startY + delta * ease(elapsed));
-      if (elapsed < 1) requestAnimationFrame(step);
-    }
-    requestAnimationFrame(step);
-  }
 
   function nearestSnapTarget() {
     let nearest = null;
@@ -472,11 +440,9 @@
       // cards past where it started, and capping the landing to ±1 meant
       // jumping backward across everything already scrolled past.
       // No explicit clamp needed to keep this from landing past Kaltsit:
-      // #outro starts at zero height (.collapsed in style.css) until the
-      // ending's own delay reveals it, so nearestSnapTarget() can never
-      // resolve to it in the first place — there's nothing there to be
-      // "nearest" to yet. The document's own physical scrollHeight is
-      // doing the work a geometry clamp used to have to do by hand.
+      // #outro isn't in snapTargets at all anymore (it's a permanent fixed
+      // overlay, not a scroll destination), so nearestSnapTarget() can
+      // never resolve to it in the first place.
       const targetIdx =
         Math.abs(delta) <= SNAP_COMMIT_PX ? gestureStartIdx : snapTargets.indexOf(nearestSnapTarget());
       const target = snapTargets[targetIdx];
@@ -494,20 +460,23 @@
     }, 500);
   }
 
-  // ---- the ending: no roadblock, no wheel interception, just physics ----
-  // Every bug this session traced back to blocking scroll with
-  // preventDefault() and then having to defend that block against
-  // residual momentum, browser quirks, and timing races. The actual fix:
-  // stop trying to intercept scrolling at all. #outro starts at zero
-  // height (.collapsed in style.css), so the document's real, physical
-  // scrollHeight ends exactly at Kaltsit's bottom — there is nowhere to
-  // scroll TO. The browser itself refuses to scroll past it, the same
-  // way any page refuses to scroll past its own end, with no JS
-  // involved. After a plain delay spent parked there, the ending reveals
-  // itself: #outro's height is restored, which is the ONLY thing that
-  // makes it reachable, and a forced scroll carries the user into it.
+  // ---- the ending: a forced swipe, both ways, not a scroll destination ----
+  // #outro is a permanent fixed full-screen panel (style.css), like
+  // Kaltsit's own art/text layers — contributing nothing to document
+  // scrollHeight, so ordinary scrolling can never reach it at all; that's
+  // what makes the roadblock unconditional instead of something to
+  // defend against residual momentum and timing races. After a plain
+  // delay spent parked on Kaltsit, the ending swipes in on its own —
+  // matching the reference: Hypergryph's own site runs on Swiper.js (a
+  // standard open-source slider library) doing a plain translateX slide
+  // between panels, not a scroll animation. Leaving is the same swipe in
+  // reverse, triggered immediately by the first backward input while the
+  // ending is showing — both directions fully lock input for their
+  // duration (endscreenLocked), matching a real Swiper transition where
+  // you can't interrupt an in-flight slide.
   const ENDING_DELAY_MS = 5000;
-  let endscreenLocked = false; // only guards the 1s reveal animation itself
+  const SWIPE_MS = 900;
+  let endscreenLocked = false;
   let revealTimer = null;
 
   function cancelReveal() {
@@ -532,57 +501,65 @@
     setTimeout(() => mediaEl.classList.remove("sweep"), 1200);
   }
 
-  // Fades the last card out over the SAME duration as the forced scroll,
-  // instead of the generic 650ms deactivateCurrent() uses for ordinary
-  // card-to-card moves. .event-media's own CSS transition is only 0.4s —
-  // with a 1000ms scroll+reveal, that let the art go fully invisible
-  // ~600ms before the outro had actually arrived/finished revealing,
-  // which is what "endscreen sometimes goes full dark" actually was: a
-  // real gap where neither side had anything to show yet. Overriding the
-  // transition-duration inline for just this one fade keeps it matched;
-  // reverting it afterward leaves ordinary transitions at their normal
-  // (faster) speed.
-  function fadeOutMatched(section, duration) {
-    if (!section) return;
-    const media = section.querySelector(".event-media");
-    const body = section.querySelector(".event-body");
-    [media, body].forEach((el) => el && (el.style.transitionDuration = `${duration}ms`));
-    section.classList.remove("active");
-    section.classList.add("leaving");
-    if (activeSection === section) activeSection = null;
-    setTimeout(() => {
-      section.classList.remove("leaving");
-      [media, body].forEach((el) => el && (el.style.transitionDuration = ""));
-    }, duration);
-  }
-
+  // Forward: Kaltsit slides out to the left while the outro slides in
+  // from the right, at the same time, same duration -- two panels
+  // trading places, not a fade-then-scroll.
   function revealEnding() {
     endscreenLocked = true;
-    // activeSection is guaranteed to be lastEventEl here: currentIdx can
-    // only have gotten to kaltsitIdx through applyState, which sets
-    // activeSection to snapTargets[kaltsitIdx] === lastEventEl in the same
-    // call — no longer two independently-lagging signals that could
-    // disagree about which card is actually showing.
     triggerSweep(lastEventEl.querySelector(".event-media"));
-    fadeOutMatched(activeSection || lastEventEl, 1000);
-    outroEl.classList.remove("collapsed"); // grows the document -- the actual "enable"
-    const targetY = window.scrollY + outroEl.getBoundingClientRect().top;
-    smoothScrollTo(targetY, 1000);
-    applyState(outroIdx);
+    lastEventEl.classList.remove("active", "leaving");
+    lastEventEl.classList.add("sliding-out");
+    if (activeSection === lastEventEl) activeSection = null;
+    outroEl.classList.add("revealed");
     setTimeout(() => {
+      lastEventEl.classList.remove("sliding-out");
       endscreenLocked = false;
-    }, 1000);
+    }, SWIPE_MS);
+  }
+
+  // Reverse: the outro slides back out to the right while Kaltsit slides
+  // back in from the left. lastEventEl is parked at translateX(-100%)
+  // via .slide-ready FIRST, with a forced reflow before switching to
+  // .sliding-in, so the browser registers that starting position and
+  // actually animates the return trip instead of it appearing already
+  // in place.
+  function exitEnding() {
+    endscreenLocked = true;
+    outroEl.classList.remove("revealed");
+    triggerSweep(lastEventEl.querySelector(".event-media"));
+    lastEventEl.classList.add("slide-ready");
+    void lastEventEl.offsetWidth;
+    lastEventEl.classList.remove("slide-ready");
+    lastEventEl.classList.add("active", "sliding-in");
+    activeSection = lastEventEl;
+    setTimeout(() => {
+      lastEventEl.classList.remove("sliding-in");
+      endscreenLocked = false;
+    }, SWIPE_MS);
   }
 
   function onWheel(e) {
     if (endscreenLocked) {
-      e.preventDefault(); // control stays withheld until the reveal slide finishes
+      e.preventDefault(); // control stays withheld until the swipe finishes
+      return;
+    }
+    if (outroEl.classList.contains("revealed")) {
+      // The outro is a fixed overlay sitting on top of Kaltsit's own
+      // position -- without this, wheel input would scroll the page
+      // underneath it while it's shown. Any backward input immediately
+      // triggers the return swipe; forward input while already at the
+      // end is simply absorbed.
+      e.preventDefault();
+      if (e.deltaY < 0) exitEnding();
       return;
     }
     scheduleSnap();
   }
   window.addEventListener("wheel", onWheel, { passive: false });
-  window.addEventListener("touchmove", scheduleSnap, { passive: true });
+  window.addEventListener("touchmove", (e) => {
+    if (endscreenLocked || outroEl.classList.contains("revealed")) return;
+    scheduleSnap();
+  }, { passive: true });
 
   // ---- keep the current slide stable across viewport-height changes ----
   // Every card is sized with min-height:100vh. A viewport-height change —
