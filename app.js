@@ -488,7 +488,29 @@
     revealTimer = null;
   }
   function scheduleReveal() {
-    revealTimer = setTimeout(revealEnding, ENDING_DELAY_MS);
+    revealTimer = setTimeout(() => {
+      // A fresh, synchronous geometry check at the exact moment this
+      // fires -- deliberately NOT activeSection, and NOT the stale
+      // currentIdx cancel-on-settle mechanism alone.
+      //
+      // currentIdx only updates once scheduleSnap's debounce settles, up
+      // to 500ms after wheeling stops -- scroll away and back within
+      // that window and the timer can still be pending when it fires,
+      // forcing the swipe while genuinely looking at a different card.
+      //
+      // activeSection was tried next, reasoning it updates live per
+      // scroll event with no such lag -- but that traded the bug for its
+      // mirror image: activeSection only catches up once ITS OWN next
+      // 'scroll' event fires and gets processed, which can itself lag
+      // slightly behind the settle (e.g. a smooth scrollIntoView still
+      // finishing). With a short delay, the timer could fire before that
+      // catch-up completes, wrongly skipping a genuinely-valid reveal
+      // with no retry.
+      //
+      // A direct getBoundingClientRect() check has neither lag: it's not
+      // cached from a previous event, it's computed right now.
+      if (visibleRatio(lastEventEl.getBoundingClientRect()) > 0.5) revealEnding();
+    }, ENDING_DELAY_MS);
   }
 
   // Plays the CSS highlight-sweep (see .event-media.sweep in style.css)
@@ -539,6 +561,21 @@
     setTimeout(() => {
       lastEventEl.classList.remove("sliding-in");
       endscreenLocked = false;
+      // currentIdx never actually left kaltsitIdx during the whole
+      // reveal <-> exit round trip (this swipe doesn't touch it,
+      // deliberately -- see applyState's comment), so applyState's own
+      // "just arrived at Kaltsit" check can never fire again on its own
+      // to re-arm the delay. Re-arming explicitly here is what makes the
+      // ending re-enterable at all after the first exit, rather than
+      // only ever once per page load. Deliberately scheduled HERE, once
+      // the swipe-back has actually finished landing on Kaltsit -- not
+      // synchronously at the top of this function, which started the new
+      // 1s countdown DURING the return animation itself, letting it fire
+      // again almost immediately after arriving (a real bug, not just a
+      // timing coincidence: 900ms swipe + 1000ms delay armed from the
+      // same start point leaves only ~100ms of genuine rest before the
+      // next reveal, not the intended fresh full second).
+      scheduleReveal();
     }, SWIPE_MS);
   }
 
