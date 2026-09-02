@@ -864,18 +864,29 @@
         onReady: (e) => {
           holder.closest(".event-media")?.classList.add("video-ready");
           entry.ready = true;
-          // The native autoplay above already started it playing (muted)
-          // the instant it was ready -- pause right away so a video
-          // that's only preloading (not yet the active card) doesn't
-          // quietly keep advancing its own timeline unseen. Harmless
-          // no-op if this entry is already meant to be active: the
-          // engagePlayer() call right below immediately seeks back to the
-          // start and resumes it for real anyway.
-          e.target.pauseVideo();
-          // Covers the case where the card became active WHILE this was
-          // still loading -- requestActivate already ran then (setting
-          // holder._wantsActivate) but couldn't engage the player yet.
-          if (holder._wantsActivate) engagePlayer(entry);
+          // A real, confirmed bug in unconditionally pausing here (as
+          // this used to do) before checking _wantsActivate: native
+          // autoplay (the autoplay:1 playerVar above) is a separate,
+          // browser-driven trigger that doesn't necessarily land at
+          // exactly the same moment onReady fires -- pausing immediately
+          // and then, on the very next line, having engagePlayer()
+          // script a fresh playVideo() raced against that still-pending
+          // native autoplay actually kicking in. Non-deterministic by
+          // nature, so it surfaced as intermittent: mostly fine, then a
+          // scrolled-to card would silently sit on YouTube's own paused
+          // thumbnail instead of playing. Preloading (the only real
+          // reason a freshly-onReady'd video would ever NOT want to
+          // activate immediately) is gone from this codebase now, so
+          // _wantsActivate is essentially always already true here in
+          // practice -- only pause in the one case that still means
+          // something (a genuine future preload), leaving the far more
+          // common activate-now path to just ride the native autoplay
+          // straight through instead of interrupting it.
+          if (holder._wantsActivate) {
+            engagePlayer(entry);
+          } else {
+            e.target.pauseVideo();
+          }
         },
         onStateChange: (e) => {
           updatePlayPauseIcon(controls, e.data);
