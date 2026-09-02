@@ -7,6 +7,11 @@
   const total = MEMENTOS.length;
   const years = [...new Set(MEMENTOS.map((m) => m.year))];
 
+  // The one video ("Concept Trailer III") that plays automatically with a
+  // custom-styled seek bar instead of the plain click-to-load pattern
+  // every other video card uses -- see mountCustomPlayer() below.
+  const CUSTOM_AUTOPLAY_VIDEO_ID = "_fHizOtMLnM";
+
   // ---- build year rail ----
   const yearButtons = {};
   years.forEach((year) => {
@@ -43,14 +48,24 @@
       )
       .join("");
 
+    // Concept Trailer III (the one card with a no-click, autoplaying,
+    // custom-controlled player -- see CUSTOM_AUTOPLAY_VIDEO_ID below)
+    // gets no load button at all: its .yt-frame starts empty, and
+    // mountCustomPlayer() populates it once the card scrolls into view.
+    // Every other video card keeps the plain click-to-load button.
+    const isCustomVideo = m.video && m.video.id === CUSTOM_AUTOPLAY_VIDEO_ID;
     const videoHtml = m.video
       ? `<div class="yt-frame" data-yt-id="${escapeAttr(m.video.id)}" data-yt-start="${m.video.start}"${
           m.video.end ? ` data-yt-end="${m.video.end}"` : ""
         }>
-          <button class="yt-load-btn" type="button" aria-label="Load video">
+          ${
+            isCustomVideo
+              ? ""
+              : `<button class="yt-load-btn" type="button" aria-label="Load video">
             <span class="yt-load-icon"></span>
             <span class="yt-load-label">LOAD VIDEO</span>
-          </button>
+          </button>`
+          }
         </div>`
       : "";
 
@@ -171,6 +186,219 @@
   document.querySelectorAll(".yt-load-btn").forEach((btn) => {
     btn.addEventListener("click", () => mountVideo(btn.closest(".yt-frame")));
   });
+
+  // ---- site-wide sound toggle ----
+  // A real click anywhere on the page grants the browser's "sticky user
+  // activation" for the rest of the page's lifetime -- confirmed directly
+  // (a genuine click on an unrelated button, then a YouTube iframe created
+  // afterward in a completely separate later step, still autoplayed with
+  // sound; the volume icon showed unmuted). Clicking this button is that
+  // gesture: it both flips the visible on/off state AND is what makes a
+  // LATER, click-free autoplay-with-sound (Concept Trailer III) actually
+  // work, rather than silently getting blocked.
+  const soundToggleBtn = document.getElementById("sound-toggle");
+  let soundEnabled = false;
+  const customPlayers = []; // YT.Player instances under custom control
+  function setSoundEnabled(on) {
+    soundEnabled = on;
+    soundToggleBtn.setAttribute("aria-pressed", String(on));
+    customPlayers.forEach((player) => {
+      if (on) player.unMute();
+      else player.mute();
+    });
+  }
+  soundToggleBtn.addEventListener("click", () => setSoundEnabled(!soundEnabled));
+
+  // ---- custom-controlled autoplay video (Concept Trailer III only) ----
+  // Loads the real YouTube JS IFrame Player API (youtube.com/iframe_api),
+  // NOT the plain-iframe pattern every other video card uses above --
+  // deliberately, so this one card can have its own play/pause + seek bar
+  // styled to match the site instead of YouTube's native red/white
+  // control bar. That script is exactly what the plain-iframe approach
+  // was chosen to avoid elsewhere (ad blockers/privacy shields commonly
+  // block it outright) -- accepted here specifically, for this one video,
+  // in exchange for controls that actually look like they belong on this
+  // site. Loaded once and cached, however many custom players end up
+  // using it.
+  let ytApiPromise = null;
+  function loadYoutubeApi() {
+    if (ytApiPromise) return ytApiPromise;
+    ytApiPromise = new Promise((resolve) => {
+      if (window.YT && window.YT.Player) {
+        resolve(window.YT);
+        return;
+      }
+      const prevReady = window.onYouTubeIframeAPIReady;
+      window.onYouTubeIframeAPIReady = () => {
+        prevReady?.();
+        resolve(window.YT);
+      };
+      const script = document.createElement("script");
+      script.src = "https://www.youtube.com/iframe_api";
+      document.head.appendChild(script);
+    });
+    return ytApiPromise;
+  }
+
+  // Builds the play/pause button + draggable seek track, appended into
+  // the .yt-frame holder above the player itself (z-index in style.css).
+  // Returns element refs the caller wires up once the real player exists.
+  function buildCustomControls(holder) {
+    const bar = document.createElement("div");
+    bar.className = "yt-custom-controls";
+    bar.innerHTML = `
+      <button class="yt-playpause" type="button" aria-label="Play or pause">
+        <svg class="icon-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+        <svg class="icon-pause" viewBox="0 0 24 24" hidden><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>
+      </button>
+      <div class="yt-seek-track">
+        <div class="yt-seek-fill"></div>
+        <div class="yt-seek-handle"></div>
+      </div>
+    `;
+    holder.appendChild(bar);
+    return {
+      bar,
+      playPauseBtn: bar.querySelector(".yt-playpause"),
+      iconPlay: bar.querySelector(".icon-play"),
+      iconPause: bar.querySelector(".icon-pause"),
+      track: bar.querySelector(".yt-seek-track"),
+      fill: bar.querySelector(".yt-seek-fill"),
+      handle: bar.querySelector(".yt-seek-handle"),
+    };
+  }
+
+  // Wires the seek track to real pointer drag (mouse + touch, via pointer
+  // events) rather than just click-to-seek, so scrubbing feels like a
+  // real player. While dragging, the progress-poll loop below is told to
+  // back off (via the returned isDragging() check) so it can't fight the
+  // handle's position mid-drag.
+  function wireSeekTrack(controls, player) {
+    let dragging = false;
+    function ratioFromEvent(e) {
+      const rect = controls.track.getBoundingClientRect();
+      const x = Math.min(Math.max(e.clientX - rect.left, 0), rect.width);
+      return rect.width > 0 ? x / rect.width : 0;
+    }
+    function setVisual(ratio) {
+      controls.fill.style.width = `${ratio * 100}%`;
+      controls.handle.style.left = `${ratio * 100}%`;
+    }
+    controls.track.addEventListener("pointerdown", (e) => {
+      dragging = true;
+      controls.track.setPointerCapture(e.pointerId);
+      setVisual(ratioFromEvent(e));
+    });
+    controls.track.addEventListener("pointermove", (e) => {
+      if (!dragging) return;
+      setVisual(ratioFromEvent(e));
+    });
+    function commitSeek(e) {
+      if (!dragging) return;
+      dragging = false;
+      const duration = player.getDuration();
+      if (duration > 0) player.seekTo(ratioFromEvent(e) * duration, true);
+    }
+    controls.track.addEventListener("pointerup", commitSeek);
+    controls.track.addEventListener("pointercancel", () => {
+      dragging = false;
+    });
+    return { isDragging: () => dragging };
+  }
+
+  // Polls getCurrentTime()/getDuration() rather than relying on
+  // onStateChange alone -- YouTube's player doesn't fire a continuous
+  // "time update" event the way a native <video> does, so a short
+  // interval is the standard way to keep a custom seek bar's fill
+  // visually in sync with real playback.
+  function startProgressLoop(player, controls, dragState) {
+    setInterval(() => {
+      if (dragState.isDragging()) return;
+      const duration = player.getDuration();
+      if (!duration) return;
+      const ratio = player.getCurrentTime() / duration;
+      controls.fill.style.width = `${ratio * 100}%`;
+      controls.handle.style.left = `${ratio * 100}%`;
+    }, 250);
+  }
+
+  function updatePlayPauseIcon(controls, playerState) {
+    const playing = playerState === 1; // YT.PlayerState.PLAYING
+    controls.iconPlay.hidden = playing;
+    controls.iconPause.hidden = !playing;
+  }
+
+  async function mountCustomPlayer(holder) {
+    if (holder.dataset.customMounted) return;
+    holder.dataset.customMounted = "1";
+    const { ytId, ytStart } = holder.dataset;
+    const YT = await loadYoutubeApi();
+
+    const playerEl = document.createElement("div");
+    holder.appendChild(playerEl);
+    const controls = buildCustomControls(holder);
+    controls.playPauseBtn.addEventListener("click", () => {
+      const state = player.getPlayerState();
+      if (state === 1) player.pauseVideo();
+      else player.playVideo();
+    });
+
+    const player = new YT.Player(playerEl, {
+      videoId: ytId,
+      playerVars: {
+        autoplay: 1,
+        controls: 0,
+        mute: soundEnabled ? 0 : 1,
+        rel: 0,
+        modestbranding: 1,
+        playsinline: 1,
+        start: ytStart ? Number(ytStart) : undefined,
+      },
+      events: {
+        onReady: (e) => {
+          holder.closest(".event-media")?.classList.add("video-ready");
+          // Belt-and-suspenders: playerVars.mute already set the initial
+          // state, but re-asserting here covers the case where
+          // soundEnabled changed in the moment between construction and
+          // ready (a click on the toggle right as this was loading).
+          if (soundEnabled) e.target.unMute();
+          else e.target.mute();
+          e.target.playVideo();
+        },
+        onStateChange: (e) => updatePlayPauseIcon(controls, e.data),
+      },
+    });
+    customPlayers.push(player);
+    const dragState = wireSeekTrack(controls, player);
+    startProgressLoop(player, controls, dragState);
+  }
+
+  // Watches the .event SECTION (normal document flow, real scroll-based
+  // geometry) rather than the .yt-frame itself (position:fixed, always
+  // "in the viewport" regardless of scroll -- see the same reasoning
+  // elsewhere for why fixed layers can't be observed this way). Same 0.5
+  // visibility threshold the rest of the app uses to mean "this is
+  // genuinely the thing on screen." Fires once, then disconnects --
+  // mountCustomPlayer itself is also idempotent (dataset.customMounted)
+  // as a second layer of protection.
+  const customVideoHolder = document.querySelector(
+    `.yt-frame[data-yt-id="${CUSTOM_AUTOPLAY_VIDEO_ID}"]`
+  );
+  if (customVideoHolder) {
+    const customVideoSection = customVideoHolder.closest(".event");
+    const customVideoObserver = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting && entry.intersectionRatio > 0.5) {
+            customVideoObserver.disconnect();
+            setTimeout(() => mountCustomPlayer(customVideoHolder), 300);
+          }
+        });
+      },
+      { threshold: 0.5 }
+    );
+    customVideoObserver.observe(customVideoSection);
+  }
 
   // ---- year watermark: slot-machine digit roll on actual year change ----
   const yearWatermarkEl = document.getElementById("year-watermark");
