@@ -328,53 +328,9 @@ body{
      for the previous 0.15s-fade-in version if this reads as too flat. */
 }
 
-/* A moving highlight streak layered on top of the plain crossfade above
-   — an original approximation of "something sweeps across as the
-   content changes," not a copy of any specific site's effect. Opt-in
-   via .sweep (added/removed by app.js) rather than tied to .active
-   generally: this is reserved for the endscreen transition specifically
-   (Kaltsit <-> outro, both directions), not every ordinary card change
-   — playing it on all 131 cards during normal scrolling was too much.
-   Toned down from the first pass too (lower peak opacity). An
-   @keyframes animation (not a transition) so it plays once per trigger
-   and settles at opacity:0 instead of leaving a static diagonal
-   highlight sitting on the art.
-   ::before, deliberately NOT ::after: .event-media::after is already the
-   always-on dark readability scrim further down this file (the gradient
-   that darkens art behind the text so it's actually legible) — a real
-   bug shipped for a while tonight because this rule used to also claim
-   ::after, and a single element can only have one. Since both rules set
-   `background` at equal specificity, the scrim rule (later in the file)
-   won that property, but this rule's own `opacity:0` was never
-   overridden (the scrim rule doesn't mention opacity), leaving the
-   readability scrim stuck invisible except during the brief sweep
-   animation on Kaltsit specifically -- exactly the washed-out text
-   reported live. Using ::before instead gives the sweep its own,
-   non-colliding pseudo-element. */
-.event-media::before{
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  pointer-events: none;
-  background: linear-gradient(100deg,
-    transparent 44%,
-    rgba(255,255,255,0.09) 49%,
-    rgba(0,176,255,0.13) 50%,
-    rgba(255,255,255,0.09) 51%,
-    transparent 56%);
-  background-size: 300% 100%;
-  opacity: 0;
-}
-.event-media.sweep::before{
-  animation: sweep-highlight 1.1s ease forwards;
-}
-@keyframes sweep-highlight{
-  0%   { background-position: 150% 0; opacity: 0; }
-  12%  { opacity: 1; }
-  55%  { background-position: 20% 0; opacity: 1; }
-  100% { background-position: -60% 0; opacity: 0; }
-}
+/* A moving highlight streak used to live here (.event-media::before,
+   opt-in via .sweep, played once on the Kaltsit <-> outro transition) --
+   removed per explicit request ("we don't want that"). */
 
 .event-media img{
   width: 100%;
@@ -515,35 +471,6 @@ body{
      why keeping it on the exit side specifically was the actual source
      of the overlap corruption. */
 }
-/* The endscreen swipe's outgoing/incoming side, reserved for Kaltsit
-   specifically (see revealEnding/exitEnding in app.js) — a real
-   translateX motion, not the plain vertical fade/drift every other
-   card-to-card move uses above. .sliding-out and .sliding-in are
-   mutually exclusive with .active/.leaving at the moments they're
-   applied (JS never sets both), but declared after those rules here so
-   they win any specificity tie regardless. */
-.event.sliding-out .event-media,
-.event.sliding-out .event-body{
-  transform: translateX(-100%);
-  opacity: 1;
-  transition: transform 0.3s cubic-bezier(0.22, 0.61, 0.36, 1);
-}
-.event.sliding-in .event-media,
-.event.sliding-in .event-body{
-  transform: translateX(0);
-  opacity: 1;
-  transition: transform 0.3s cubic-bezier(0.22, 0.61, 0.36, 1);
-}
-/* Starting position for a swipe entering from the left (backward moves):
-   parked just off-screen before .sliding-in animates it back to
-   translateX(0), mirroring the outro's own off-screen-right resting
-   spot. */
-.event.slide-ready .event-media,
-.event.slide-ready .event-body{
-  transform: translateX(-100%);
-  opacity: 1;
-}
-
 .event-index{
   font-family: var(--font-display);
   font-size: 12px;
@@ -615,13 +542,27 @@ a.tag-chip:hover{
    position:fixed element contributes NOTHING to the document's
    scrollHeight, so the page's real, physical scroll bound already ends
    at Kaltsit — there's nowhere further to scroll, full stop, no JS
-   interception or height tricks needed. Hidden off-screen to the right
-   (translateX(100%)) until revealEnding() swipes it in; swiped back out
-   the same way on exit. Matches the reference exactly now, not just in
-   mechanism: Hypergryph's own site runs on Swiper.js (a standard
-   open-source slider library) with plain translateX slides at 300ms — an
-   earlier pass used a heavier 900ms here, which read as a stall/wall
-   rather than a snappy nav beat; 300ms matches their own measured speed. */
+   interception or height tricks needed.
+
+   A wipe, not a slide: #outro sits at its normal resting position the
+   whole time (never moves) and is instead clipped away entirely
+   (clip-path inset from the left edge, 100% = nothing visible) until
+   revealEnding() adds .revealed, which animates that clip open to 0%
+   (fully visible) -- a hard vertical edge sweeping left across the
+   screen, uncovering the outro (already sitting there, opaque, above
+   Kaltsit in z-index) while Kaltsit itself stays completely static
+   underneath, simply covered as the edge passes over it. Reversed the
+   same way on exit, clip-path animating back to 100% and the edge
+   sweeping back right, uncovering Kaltsit as it goes. An earlier version
+   used a translateX slide instead (both panels physically moving) --
+   replaced by explicit request for this wipe look instead, independent
+   of which one Hypergryph's own reference actually uses.
+
+   9x Hypergryph's own measured 300ms Swiper speed (two rounds of "3x it"
+   by explicit request) -- their snappy nav pace didn't feel right for
+   this one-time finale beat, which reads better as a slow, weighty
+   motion. Keep this in sync with app.js's SWIPE_MS constant if either
+   changes. */
 #outro{
   position: fixed;
   inset: 0;
@@ -634,23 +575,23 @@ a.tag-chip:hover{
   background: var(--bg);
   text-align: center;
   padding: 40px 24px;
-  transform: translateX(100%);
-  transition: transform 0.3s cubic-bezier(0.22, 0.61, 0.36, 1);
+  clip-path: inset(0 0 0 100%);
+  transition: clip-path 2.7s cubic-bezier(0.22, 0.61, 0.36, 1);
   pointer-events: none;
 }
 #outro.revealed{
-  transform: translateX(0);
+  clip-path: inset(0 0 0 0%);
   pointer-events: auto;
 }
 /* Text fades in only once the slide has mostly settled (delayed start),
    rather than fading in step with the panel's own motion — keeps the
    panel itself reading as the primary motion, text as a secondary beat
-   right after it lands. Delay scaled down from 0.5s alongside the 900ms
-   -> 300ms panel-speed change, same ratio. */
+   right after it lands. Delay scaled up alongside the panel speed, same
+   ratio (~0.56x the panel duration). */
 #outro .outro-line,
 #outro .pill-btn{
   opacity: 0;
-  transition: opacity 0.3s ease 0.17s;
+  transition: opacity 2.7s ease 1.5s;
 }
 #outro.revealed .outro-line,
 #outro.revealed .pill-btn{

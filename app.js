@@ -280,11 +280,11 @@
     // scrolling's own visual feedback for the whole swipe duration too
     // (confirmed live: wheeling backward off Kaltsit right as a swipe was
     // in flight left the art/progress-bar visibly stuck, then jumping,
-    // for the lock's duration). It turns out no special-casing is needed:
-    // .sliding-out/.sliding-in apply a CSS transform to lastEventEl, and
-    // getBoundingClientRect() already reflects that transform, so this
-    // function's own geometry check naturally treats it as offscreen
-    // during its own swipe without being told to.
+    // for the lock's duration). The outroEl.revealed check above already
+    // covers the whole wipe's duration on its own (lastEventEl itself
+    // never moves or changes geometry now -- see revealEnding/exitEnding
+    // -- it's the outro panel's own clip-path that does the covering), so
+    // no separate lock-based freeze is needed here at all.
     if (outroEl.classList.contains("revealed")) return;
 
     // Always shows WHICHEVER section is most visible right now, however
@@ -373,7 +373,7 @@
     // hero is a bigger move than the one-card reverse swipe is built for,
     // so it just drops straight out.
     outroEl.classList.remove("revealed");
-    lastEventEl.classList.remove("active", "leaving", "sliding-out", "sliding-in", "slide-ready");
+    lastEventEl.classList.remove("active", "leaving");
     if (activeSection === lastEventEl) activeSection = null;
     goTo(0);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -465,53 +465,90 @@
   // scrollHeight, so ordinary scrolling can never reach it at all. Kaltsit
   // itself is reached through the ordinary scheduleSnap debounce, same as
   // every other card -- this boundary is scoped ONLY to the swipe between
-  // Kaltsit and the outro, once you're already settled on Kaltsit
-  // (currentIdx === kaltsitIdx): the very next forward wheel tick swipes
-  // straight into the ending immediately, no wait, matching Hypergryph's
-  // own reference site (Swiper.js, translateX slide, no native scrolling
-  // at all) and mirroring exitEnding's already-immediate backward tick
-  // below. An earlier version waited out a fixed delay parked on Kaltsit
-  // before auto-revealing -- removed per explicit request: it required
-  // halting the wheel to fire, which read as unresponsive compared to a
-  // real Hypergryph-style tick-and-go. Both directions fully lock input
-  // for their duration (endscreenLocked), matching a real Swiper
-  // transition where you can't interrupt an in-flight slide.
-  const SWIPE_MS = 900;
+  // Kaltsit and the outro, once you're already settled on Kaltsit: the
+  // very next forward wheel tick swipes straight into the ending
+  // immediately, no wait, mirroring exitEnding's already-immediate
+  // backward tick below.
+  //
+  // 2700ms (900ms x3, itself 3x Hypergryph's own measured 300ms Swiper
+  // speed, both by explicit request -- their snappy pace didn't feel
+  // right for this one-time finale beat). Must stay in sync with
+  // style.css's own .sliding-out/.sliding-in/#outro transition durations
+  // -- those two were found out of sync once already tonight, so double
+  // check both sides after touching either.
+  //
+  // The lock (endscreenLocked) is purely duration-gated: armed once when
+  // a swipe commits, released exactly SWIPE_MS later, ready immediately
+  // for the very next tick -- NOT extended by further input during that
+  // window. An earlier version made it settle-gated (re-arming on every
+  // tick, only releasing once the wheel went fully idle), based on
+  // stress-testing Hypergryph's real site with synthetic
+  // dispatchEvent(WheelEvent) bursts, which looked locked for far longer
+  // than one transition's duration. Reverted per direct observation of
+  // the real site under actual use: it does NOT stay locked past the
+  // transition itself. The likely explanation for the mismatch: a real
+  // trackpad gesture fires a continuous, decaying stream of wheel events,
+  // and their code may be waiting for that momentum to taper off, not
+  // just for input to stop arriving -- a synthetic burst of fixed-size
+  // ticks never decays, so it never looked "finished" to that logic,
+  // producing a lock that isn't really there for genuine input.
+  const SWIPE_MS = 2700;
   let endscreenLocked = false;
+  let unlockTimer = null;
 
-  // Plays the CSS highlight-sweep (see .event-media.sweep in style.css)
-  // once, reserved for the Kaltsit <-> outro boundary specifically, not
-  // ordinary card-to-card scrolling. Removes/re-adds the class (with a
-  // forced reflow in between) so a repeat trigger restarts the animation
-  // instead of no-op'ing because the class was already present, then
-  // cleans up afterward so it doesn't linger as dead markup.
-  function triggerSweep(mediaEl) {
-    if (!mediaEl) return;
-    mediaEl.classList.remove("sweep");
-    void mediaEl.offsetWidth;
-    mediaEl.classList.add("sweep");
-    setTimeout(() => mediaEl.classList.remove("sweep"), 1200);
+  // Arms the one-shot countdown that releases endscreenLocked, SWIPE_MS
+  // after a swipe commits -- also guarantees the wipe's own CSS
+  // transition has had time to finish before anything else touches
+  // lastEventEl's classes again, which is why that cleanup lives here
+  // instead of a separate timer.
+  function scheduleUnlock() {
+    clearTimeout(unlockTimer);
+    unlockTimer = setTimeout(() => {
+      // The wipe is done and #outro now fully covers the screen either
+      // way (forward: fully revealed; backward: fully hidden again) --
+      // safe to settle Kaltsit's own active bookkeeping now regardless of
+      // direction, matching whatever's actually true at this point. Uses
+      // deactivateCurrent() rather than manually stripping the class so
+      // activeSection itself gets nulled too, not just the CSS -- leaving
+      // it stale here (still pointing at lastEventEl after its .active
+      // was removed) is exactly the kind of mismatch revealEnding's own
+      // cleanup above exists to guard against.
+      if (outroEl.classList.contains("revealed") && activeSection === lastEventEl) {
+        deactivateCurrent();
+      }
+      endscreenLocked = false;
+    }, SWIPE_MS);
   }
 
-  // Forward: Kaltsit slides out to the left while the outro slides in
-  // from the right, at the same time, same duration -- two panels
-  // trading places, not a fade-then-scroll.
+  // Forward: a wipe, not a slide -- neither panel actually moves. Kaltsit
+  // stays exactly where it is, fully visible, for the whole transition;
+  // #outro (already sitting at its normal resting position, opaque,
+  // above Kaltsit in z-index) has its own clip-path animated open by the
+  // .revealed class in style.css, so a hard vertical edge sweeps across
+  // the screen uncovering the outro from the right while Kaltsit stays
+  // static underneath, only actually covered once the edge reaches it.
+  // Replaced an earlier translateX-based slide per explicit request --
+  // Hypergryph's real reference turned out to use a slide too (verified
+  // via devtools), but a wipe is what was actually wanted here regardless
+  // of that fidelity.
   function revealEnding() {
     endscreenLocked = true;
     applyState(kaltsitIdx);
-    triggerSweep(lastEventEl.querySelector(".event-media"));
-    // Deactivate whatever's ACTUALLY showing right now, not just
-    // lastEventEl specifically. onWheel's trigger is a live geometry
-    // check now (see below), so in practice activeSection should always
-    // already be lastEventEl here -- but this is the same class of bug
-    // that caused a real "card 116 bleeding through behind the endscreen,
-    // counter reading 132/131" corruption: a stale/mismatched
-    // activeSection left un-cleared because this only ever checked for
-    // one specific element. Unconditional cleanup closes that gap for
-    // good regardless of how the trigger itself is decided.
-    deactivateCurrent();
-    lastEventEl.classList.remove("active", "leaving");
-    lastEventEl.classList.add("sliding-out");
+    // Deactivate whatever ELSE might still be active first. The live
+    // geometry trigger in onWheel can fire a frame before updateDisplay's
+    // own bookkeeping has caught up, so activeSection can still be some
+    // earlier card (e.g. Lemuen) the instant this fires -- confirmed
+    // live: 130/131's text visibly interleaved with 131/131's during the
+    // wipe in, since text has no opaque background to hide one behind
+    // the other. Kaltsit itself must stay ACTIVE (fully opaque) for the
+    // whole wipe -- it's #outro's own expanding clip-path that
+    // progressively covers it, not Kaltsit's own opacity -- so this only
+    // clears activeSection when it's genuinely something OTHER than
+    // lastEventEl, never lastEventEl itself.
+    if (activeSection && activeSection !== lastEventEl) deactivateCurrent();
+    lastEventEl.classList.remove("leaving");
+    lastEventEl.classList.add("active");
+    activeSection = lastEventEl;
     outroEl.classList.add("revealed");
     // updateDisplay() never runs while the outro is revealed (see its own
     // guard above), and no real scrolling happens for this swipe either
@@ -526,38 +563,27 @@
     // owns both normally, but it's frozen for as long as the outro is
     // revealed, so whatever year was highlighted right before this fired
     // would otherwise just sit there, stale, for the whole time the
-    // ending is on screen (confirmed live: a fast wheel-up-then-down-fast
-    // gesture right before landing on the ending left a completely
-    // unrelated year, e.g. 2024, stuck lit on the rail). A first pass
-    // cleared the rail entirely instead of setting it -- technically not
-    // wrong, but it read as yet another inconsistent state rather than a
-    // fix. Simpler and clearer: the ending stays within Kaltsit's own
-    // year the whole time it's on screen, same value exitEnding restores
-    // on the way back out, so nothing ever goes blank or unexplained.
+    // ending is on screen. The ending stays within Kaltsit's own year the
+    // whole time it's on screen, same value exitEnding restores on the
+    // way back out, so nothing ever goes blank or unexplained.
     const kaltsitYear = Number(lastEventEl.dataset.year);
     Object.entries(yearButtons).forEach(([y, btn]) => btn.classList.toggle("active", Number(y) === kaltsitYear));
     renderYearWatermark(kaltsitYear);
     yearWatermarkEl.classList.remove("hidden");
-    setTimeout(() => {
-      lastEventEl.classList.remove("sliding-out");
-      endscreenLocked = false;
-    }, SWIPE_MS);
+    scheduleUnlock();
   }
 
-  // Reverse: the outro slides back out to the right while Kaltsit slides
-  // back in from the left. lastEventEl is parked at translateX(-100%)
-  // via .slide-ready FIRST, with a forced reflow before switching to
-  // .sliding-in, so the browser registers that starting position and
-  // actually animates the return trip instead of it appearing already
-  // in place.
+  // Reverse: #outro's clip-path animates back closed (see .revealed
+  // removal in style.css), the covering edge sweeping back the other way
+  // and shrinking the visible outro region from the left -- revealing
+  // Kaltsit, which (same as the forward direction) never itself moves,
+  // just needs to already be active/opaque underneath so there's
+  // something correct to reveal as the edge passes over it.
   function exitEnding() {
     endscreenLocked = true;
     outroEl.classList.remove("revealed");
-    triggerSweep(lastEventEl.querySelector(".event-media"));
-    lastEventEl.classList.add("slide-ready");
-    void lastEventEl.offsetWidth;
-    lastEventEl.classList.remove("slide-ready");
-    lastEventEl.classList.add("active", "sliding-in");
+    lastEventEl.classList.remove("leaving");
+    lastEventEl.classList.add("active");
     activeSection = lastEventEl;
     // Same reasoning as revealEnding's counter line: own it explicitly
     // rather than hoping a 'scroll' event will come along and fix it.
@@ -567,26 +593,42 @@
     Object.entries(yearButtons).forEach(([y, btn]) => btn.classList.toggle("active", Number(y) === year));
     renderYearWatermark(year);
     yearWatermarkEl.classList.remove("hidden");
-    setTimeout(() => {
-      lastEventEl.classList.remove("sliding-in");
-      endscreenLocked = false;
-      // currentIdx never left kaltsitIdx during the whole reveal <-> exit
-      // round trip (this swipe doesn't touch it), and re-entering the
-      // ending is now just the next forward wheel tick's ordinary check
-      // in onWheel -- no re-arming needed, there's no timer left to arm.
-    }, SWIPE_MS);
+    scheduleUnlock();
   }
 
   function onWheel(e) {
+    // Blocks ALL wheel input for as long as a swipe (either direction) is
+    // actively mid-animation -- checked first, before anything else, so
+    // it applies uniformly regardless of outroEl.revealed's own momentary
+    // state (exitEnding flips that class the instant it starts, well
+    // before the animation itself finishes). Restores the original "hard
+    // stop, can't scroll past" intent for this one boundary specifically:
+    // without this, continuous real scrolling right as you exit the
+    // ending blows straight through Kaltsit mid-wipe instead of landing
+    // on it first (confirmed live: exiting while still wheeling landed
+    // on card 125, nowhere near Kaltsit, in one unbroken motion).
+    //
+    // This is deliberately NOT the same thing as the earlier "131 jump"
+    // fix below, and doesn't undo it: endscreenLocked is only ever true
+    // during an ACTIVE swipe -- it's already false the moment you're
+    // genuinely resting on Kaltsit with no swipe in flight, so ordinary
+    // backward scrolling away from an already-settled Kaltsit (reached
+    // the normal way, via scheduleSnap) is completely unaffected by this
+    // check and stays exactly as responsive as that fix made it.
+    if (endscreenLocked) {
+      e.preventDefault();
+      return;
+    }
     if (outroEl.classList.contains("revealed")) {
       // The outro is a fixed overlay sitting on top of Kaltsit's own
       // position -- without this, wheel input would scroll the page
       // underneath it while it's shown. Any backward input immediately
-      // triggers the return swipe (guarded by endscreenLocked so a second
-      // tick mid-animation can't re-fire it); forward input while already
-      // at the end is simply absorbed.
+      // triggers the return swipe; forward input while already at the
+      // end is simply absorbed. (endscreenLocked, checked above, already
+      // covers "swipe in flight" -- by the time control reaches here,
+      // it's always the settled, ready-for-input case.)
       e.preventDefault();
-      if (!endscreenLocked && e.deltaY < 0) exitEnding();
+      if (e.deltaY < 0) exitEnding();
       return;
     }
     // Whenever Kaltsit is genuinely the thing on screen right now, the
@@ -612,25 +654,18 @@
     // too, which introduced the same class of corruption there -- reverted
     // in favor of leaving every other card-to-card transition on the
     // plain debounce below.
-    //
-    // endscreenLocked only guards against RE-TRIGGERING revealEnding/
-    // exitEnding while one is already mid-animation -- it deliberately
-    // does NOT preventDefault ordinary wheel input in general anymore. An
-    // earlier version blocked ALL input for the full swipe duration
-    // (endscreenLocked check at the very top of this function), which
-    // read as a real stuck/frozen page if you kept wheeling backward past
-    // Kaltsit right as you landed on it (confirmed live: the progress bar
-    // and art both visibly froze for the lock's duration, then jumped).
-    // scheduleSnap below doesn't actually conflict with the swipe
-    // animation -- lastEventEl's transform is independent of real scroll
-    // position, and getBoundingClientRect() already reflects that
-    // transform, so updateDisplay naturally treats it as offscreen during
-    // its own swipe without any special-casing.
-    if (!endscreenLocked && visibleRatio(lastEventEl.getBoundingClientRect()) > 0.5 && e.deltaY > 0) {
+    if (visibleRatio(lastEventEl.getBoundingClientRect()) > 0.5 && e.deltaY > 0) {
       e.preventDefault();
       revealEnding();
       return;
     }
+    // Backward ticks near Kaltsit (or anything while not near Kaltsit at
+    // all) fall straight through to the ordinary debounce below. By this
+    // point endscreenLocked is already known false (the top-of-function
+    // check above would have returned otherwise), so this is always the
+    // genuinely-settled case -- ordinary scrolling away from a Kaltsit
+    // that was reached the normal way, nothing to do with the endscreen
+    // swipe at all. Nothing here needs to check endscreenLocked itself.
     scheduleSnap();
   }
   window.addEventListener("wheel", onWheel, { passive: false });
