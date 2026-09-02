@@ -431,11 +431,33 @@ body{
    here -- removed per explicit request, its own fade in/out read as two
    flickers of its own. See git history if it's worth revisiting. */
 .yt-frame iframe{
-  /* Plain full-fill, filling the whole frame. */
+  /* NOT a plain full-fill anymore -- that made OUR box fill the frame,
+     but YouTube's own player still renders the actual 16:9 video
+     letterboxed/pillarboxed WITHIN that box to preserve its native aspect
+     ratio (confirmed live: visible black bars on a desktop-width browser
+     window, which is wider than 16:9). There's no playerVar or API
+     control over that -- it's YouTube's own internal player.html
+     behavior. Standard workaround: oversize the iframe itself in
+     whichever axis would otherwise be letterboxed, so YouTube's own
+     "contain" fit lands on a box that's already bigger than the visible
+     frame -- the video ends up covering it with the excess simply
+     clipped by .yt-frame's overflow:hidden, the same "cover" look
+     fullscreen already has natively (that's a different code path
+     entirely -- the browser's real Fullscreen API, which sizes the video
+     against actual screen dimensions directly, no letterboxing math
+     needed). Using vw/vh rather than percentages: .yt-frame is always
+     exactly viewport-sized (position:fixed inset:0 the whole chain up),
+     so these are equivalent to "of .yt-frame" here, and vw/vh keep the
+     math anchored to the real viewport instead of this element's own
+     (potentially oversized) box referencing itself. */
   position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+  top: 50%;
+  left: 50%;
+  width: 100vw;
+  height: 56.25vw; /* 100vw * 9/16 -- the iframe's own box, kept at the video's native aspect ratio */
+  min-width: 177.78vh; /* 100vh * 16/9 -- whichever axis needs to grow to cover a taller-than-16:9 viewport instead */
+  min-height: 100vh;
+  transform: translate(-50%, -50%);
   border: 0;
 }
 
