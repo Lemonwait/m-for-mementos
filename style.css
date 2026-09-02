@@ -516,12 +516,29 @@ body{
   opacity: 1;
   transition: transform 0.9s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
-/* Starting position for the reverse swipe: parked just off-screen to the
-   left before .sliding-in animates it back to translateX(0), mirroring
-   the outro's own off-screen-right resting spot. */
+/* Starting position for a swipe entering from the left (backward moves):
+   parked just off-screen before .sliding-in animates it back to
+   translateX(0), mirroring the outro's own off-screen-right resting
+   spot. */
 .event.slide-ready .event-media,
 .event.slide-ready .event-body{
   transform: translateX(-100%);
+  opacity: 1;
+}
+/* The Lemuen<->Kaltsit boundary gets the same immediate swipe treatment
+   as Kaltsit<->outro (see app.js's swipeCards) -- these are that pair's
+   forward-direction mirrors: exits to the right (not left) and enters
+   from the right (not left), since this is the reverse-of-reverse case
+   (advancing INTO Kaltsit, not leaving the outro). */
+.event.sliding-out-back .event-media,
+.event.sliding-out-back .event-body{
+  transform: translateX(100%);
+  opacity: 1;
+  transition: transform 0.9s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.event.slide-ready-fwd .event-media,
+.event.slide-ready-fwd .event-body{
+  transform: translateX(100%);
   opacity: 1;
 }
 

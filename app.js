@@ -579,6 +579,59 @@
     }, SWIPE_MS);
   }
 
+  // The Lemuen<->Kaltsit boundary gets the same immediate-lock swipe as
+  // Kaltsit<->outro, instead of falling through to the general
+  // scheduleSnap debounce -- matching what Hypergryph's own site does
+  // for every card change (there's no native scrolling on their site at
+  // all; overflow:hidden throughout): act on the very first wheel tick,
+  // ignore all further input until that one transition finishes, never
+  // wait for the wheel to go idle. Deliberately scoped to just this one
+  // boundary, not every card site-wide.
+  function advanceToKaltsit(lemuenEl) {
+    endscreenLocked = true;
+    lemuenEl.classList.remove("active", "leaving");
+    lemuenEl.classList.add("sliding-out");
+    if (activeSection === lemuenEl) activeSection = null;
+    lastEventEl.classList.add("active", "sliding-in");
+    activeSection = lastEventEl;
+    applyState(kaltsitIdx); // arms the reveal delay via enteringKaltsit
+    // Unlike Kaltsit<->outro, both ends of THIS swipe are ordinary
+    // in-flow .event sections with real, distinct scroll positions --
+    // outro has none at all, so nothing there could ever contradict its
+    // own swipe. Without this, the continuous updateDisplay tracker
+    // would see we're still physically scrolled at Lemuen's position
+    // the instant endscreenLocked releases, and silently revert the
+    // whole illusion back. Instant, not animated: the position:fixed
+    // art layers' visibility is already fully controlled by the
+    // .sliding-out/.sliding-in classes regardless of scroll position,
+    // so jumping the real scroll to match is invisible on screen.
+    window.scrollTo(0, window.scrollY + lastEventEl.getBoundingClientRect().top);
+    setTimeout(() => {
+      lemuenEl.classList.remove("sliding-out");
+      lastEventEl.classList.remove("sliding-in");
+      endscreenLocked = false;
+    }, SWIPE_MS);
+  }
+  function retreatToLemuen(lemuenEl) {
+    endscreenLocked = true;
+    lastEventEl.classList.remove("active", "leaving");
+    lastEventEl.classList.add("sliding-out-back");
+    if (activeSection === lastEventEl) activeSection = null;
+    lemuenEl.classList.add("slide-ready-fwd");
+    void lemuenEl.offsetWidth;
+    lemuenEl.classList.remove("slide-ready-fwd");
+    lemuenEl.classList.add("active", "sliding-in");
+    activeSection = lemuenEl;
+    applyState(kaltsitIdx - 1); // triggers leavingKaltsit -> cancelReveal()
+    // Same reasoning as advanceToKaltsit above, mirrored.
+    window.scrollTo(0, window.scrollY + lemuenEl.getBoundingClientRect().top);
+    setTimeout(() => {
+      lastEventEl.classList.remove("sliding-out-back");
+      lemuenEl.classList.remove("sliding-in");
+      endscreenLocked = false;
+    }, SWIPE_MS);
+  }
+
   function onWheel(e) {
     if (endscreenLocked) {
       e.preventDefault(); // control stays withheld until the swipe finishes
@@ -592,6 +645,17 @@
       // end is simply absorbed.
       e.preventDefault();
       if (e.deltaY < 0) exitEnding();
+      return;
+    }
+    const lemuenEl = snapTargets[kaltsitIdx - 1];
+    if (currentIdx === kaltsitIdx - 1 && e.deltaY > 0) {
+      e.preventDefault();
+      advanceToKaltsit(lemuenEl);
+      return;
+    }
+    if (currentIdx === kaltsitIdx && e.deltaY < 0) {
+      e.preventDefault();
+      retreatToLemuen(lemuenEl);
       return;
     }
     scheduleSnap();
