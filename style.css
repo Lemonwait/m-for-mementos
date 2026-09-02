@@ -13,7 +13,22 @@
 *{ box-sizing: border-box; }
 
 html{
-  scroll-behavior: smooth;
+  /* NOT scroll-behavior:smooth -- every scroll our own JS ever triggers
+     already requests { behavior: "smooth" } explicitly on the call itself
+     (scheduleSnap's scrollIntoView, the year-rail buttons, back-to-top),
+     so this global property was never doing anything FOR those. What it
+     WAS doing: also smoothing the browser's own native, un-preventDefault
+     wheel-scroll response to each raw tick (onWheel doesn't preventDefault
+     for ordinary card-to-card scrolling -- native scrolling is what
+     actually moves scrollY there, this file just reads the result after).
+     That native smoothing and our own scrollIntoView's smoothing are two
+     separate animations that can both be mid-flight on the same scrollY
+     at once, fighting each other -- confirmed live as the likely cause of
+     scrolling feeling like it needed far more wheel input than it should
+     to actually commit to the next card. Removing this only makes native,
+     uncontrolled scrolling instant; every deliberate animation this app
+     itself plays is untouched.
+     */
   scrollbar-width: none;
   -ms-overflow-style: none;
 }

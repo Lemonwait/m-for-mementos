@@ -586,7 +586,16 @@
   // clears that flag -- without this check, a reveal frozen at RISE_CAP
   // waiting on a ready signal that will now never come would loop via
   // requestAnimationFrame forever.
-  const BLINDS_RISE_CAP = 0.92;
+  // Held well short of fully open (not just short) -- confirmed live
+  // cause of an intermittent flicker: when a video ISN'T preloaded in
+  // time, this is where the reveal sits waiting for it, and playVideo()
+  // (called the instant it's ready, from engagePlayer) triggers YouTube's
+  // own native icon flash right at that moment -- at 0.92 that flash was
+  // happening through bars already 92% open, in plain view. At 0.25 the
+  // same flash happens through much narrower gaps, closer to how it
+  // looked pre-preload (when playVideo() always fired at the very start
+  // of the reveal, bars still mostly closed).
+  const BLINDS_RISE_CAP = 0.25;
   // Every write to mask-image forces the browser to repaint the whole
   // card -- fine on its own, but confirmed live: doing that on every
   // single animation frame (~60/sec) WHILE the real YouTube iframe is
@@ -715,6 +724,16 @@
   function engagePlayer(entry) {
     if (entry.activated) return;
     entry.activated = true;
+    // Seeks back to the real starting point rather than trusting wherever
+    // playback happens to be -- see onReady's own comment for why it's
+    // not necessarily still sitting at 0: native autoplay (always
+    // muted -- the only reliable way to guarantee it plays at all, see
+    // playerVars below) starts the instant the player's ready, whether or
+    // not this entry has actually been shown yet, so a video that spent a
+    // while preloading unseen could otherwise reveal already partway
+    // through instead of starting fresh.
+    const { ytStart } = entry.holder.dataset;
+    entry.player.seekTo(ytStart ? Number(ytStart) : 0, true);
     if (soundEnabled) entry.player.unMute();
     else entry.player.mute();
     entry.player.playVideo();
@@ -755,14 +774,25 @@
     const player = new YT.Player(playerEl, {
       videoId: ytId,
       playerVars: {
-        // autoplay is 0 now, not 1 -- this can be constructed well before
-        // the card is active (see the preload observer below), and it
-        // must NOT start playing (audibly or not) until it genuinely is.
-        // requestActivate()/engagePlayer() calls playVideo() explicitly
-        // once that's actually true.
-        autoplay: 0,
+        // Real, confirmed bug with the earlier autoplay:0 + explicit
+        // playVideo() approach: a script-invoked playVideo() call is held
+        // to a STRICTER browser autoplay policy than the native autoplay
+        // attribute/playerVar is -- it silently failed to actually play
+        // at all in normal use ("this disables our autoplay"). Native
+        // autoplay is unconditionally reliable ONLY when muted (the one
+        // browser-autoplay exception that's always allowed, regardless of
+        // any user gesture/activation state), so mute is hardcoded true
+        // here rather than following soundEnabled -- this can construct
+        // well before the card is active (see the preload observer
+        // below), and must never be heard before it's genuinely shown.
+        // onReady immediately pauses it again (see below) so a
+        // still-preloading video doesn't silently keep playing ahead
+        // unseen; engagePlayer() is what actually resumes it (seeking
+        // back to the start first) and sets the real mute state once the
+        // card is genuinely active.
+        autoplay: 1,
         controls: 0,
-        mute: soundEnabled ? 0 : 1,
+        mute: 1,
         rel: 0,
         modestbranding: 1,
         playsinline: 1,
@@ -770,9 +800,17 @@
         start: ytStart ? Number(ytStart) : undefined,
       },
       events: {
-        onReady: () => {
+        onReady: (e) => {
           holder.closest(".event-media")?.classList.add("video-ready");
           entry.ready = true;
+          // The native autoplay above already started it playing (muted)
+          // the instant it was ready -- pause right away so a video
+          // that's only preloading (not yet the active card) doesn't
+          // quietly keep advancing its own timeline unseen. Harmless
+          // no-op if this entry is already meant to be active: the
+          // engagePlayer() call right below immediately seeks back to the
+          // start and resumes it for real anyway.
+          e.target.pauseVideo();
           // Covers the case where the card became active WHILE this was
           // still loading -- requestActivate already ran then (setting
           // holder._wantsActivate) but couldn't engage the player yet.
@@ -1134,31 +1172,71 @@
     snapTimer = setTimeout(() => {
       const delta = window.scrollY - gestureStartY;
       // Small movement: snap back to wherever the gesture started (this is
-      // the 2-tick "resist jitter" behavior). Large movement: land on
-      // whichever card is ACTUALLY nearest right now, evaluated fresh at
-      // fire-time — not capped at ±1 from the start index, which was the
-      // "snaps 20 events back" bug: a long continuous scroll can land many
-      // cards past where it started, and capping the landing to ±1 meant
-      // jumping backward across everything already scrolled past.
-      // No explicit clamp needed to keep this from landing past Kaltsit:
-      // #outro isn't in snapTargets at all anymore (it's a permanent fixed
-      // overlay, not a scroll destination), so nearestSnapTarget() can
-      // never resolve to it in the first place.
-      const targetIdx =
-        Math.abs(delta) <= SNAP_COMMIT_PX ? gestureStartIdx : snapTargets.indexOf(nearestSnapTarget());
+      // the 2-tick "resist jitter" behavior).
+      //
+      // Large movement used to mean "land on whichever card is nearest
+      // right now" unconditionally -- a real, confirmed bug: nearestSnapTarget()
+      // picks by raw on-screen distance, which still needs the gesture to
+      // cross roughly the HALFWAY point of a card's height (~450px+ on a
+      // typical viewport) before it resolves to anything other than the
+      // card the gesture started on. SNAP_COMMIT_PX only ever decided
+      // "should this look past the start card at all" -- it never actually
+      // controlled where a modest-but-real tick (confirmed live: a single
+      // 100px tick, well clear of the 5px threshold) landed, so anything
+      // short of that ~450px halfway point just fell back to the start
+      // card regardless, reading as "nothing happened."
+      //
+      // Fixed by splitting the two genuinely different cases the old
+      // single nearestSnapTarget() call was trying to cover at once:
+      //   - Movement cleared the threshold but nearest-by-position STILL
+      //     resolves to the start card (i.e. under the halfway point) --
+      //     commit exactly one card in the movement's own direction
+      //     instead, so a single real tick reliably moves exactly one
+      //     card, matching SNAP_COMMIT_PX's own stated intent.
+      //   - Movement already carried past that halfway point on its own
+      //     (a long/fast continuous scroll) -- trust the raw nearest,
+      //     uncapped, same as before. Capping this to ±1 was the earlier
+      //     "snaps 20 events back" bug: a long continuous scroll can land
+      //     many cards past where it started, and capping the landing to
+      //     ±1 meant jumping backward across everything already scrolled
+      //     past.
+      // No explicit clamp needed to keep either case from landing past
+      // Kaltsit: #outro isn't in snapTargets at all anymore (it's a
+      // permanent fixed overlay, not a scroll destination), so
+      // nearestSnapTarget() can never resolve to it in the first place --
+      // only the one-card-at-a-time case needs its own explicit clamp,
+      // since it computes an index directly rather than deriving one from
+      // on-screen geometry.
+      const nearestIdx = snapTargets.indexOf(nearestSnapTarget());
+      let targetIdx;
+      if (Math.abs(delta) <= SNAP_COMMIT_PX) {
+        targetIdx = gestureStartIdx;
+      } else if (nearestIdx === gestureStartIdx) {
+        targetIdx = Math.max(
+          0,
+          Math.min(snapTargets.length - 1, gestureStartIdx + (delta > 0 ? 1 : -1))
+        );
+      } else {
+        targetIdx = nearestIdx;
+      }
       const target = snapTargets[targetIdx];
       if (target && Math.abs(target.getBoundingClientRect().top) > 4) {
         target.scrollIntoView({ behavior: "smooth", block: "start" });
       }
       applyState(targetIdx);
       snapTimer = null;
-      // 500ms, not 150ms: a slow, deliberate scroller naturally pauses
-      // between individual wheel ticks (each notch), and a short debounce
-      // treats that natural gap as "done scrolling," evaluating (and
-      // resetting gestureStartY) before they've made enough ticks to
-      // reach the commit threshold above. This needs to be patient enough
-      // to span that inter-tick gap.
-    }, 500);
+      // History: started at 150ms, raised to 500ms because a slow,
+      // deliberate scroller's natural pause between individual wheel
+      // ticks could get mistaken for "done scrolling" and evaluate (and
+      // reset gestureStartY) too early. Brought down to 125ms by request
+      // once SNAP_COMMIT_PX (above) dropped to 5 -- with a threshold that
+      // small, virtually any real tick's movement already clears it well
+      // before this fires, so there's much less left riding on this
+      // window being generous; it's now mostly just "how long after your
+      // last tick before it commits," which reads as noticeably snappier
+      // at 125ms. Revisit if a genuinely slow scroller's pauses start
+      // getting cut off again.
+    }, 125);
   }
 
   // ---- the ending: a forced swipe, both ways, not a scroll destination ----
