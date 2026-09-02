@@ -276,17 +276,21 @@
   // skippable roadblock, which is what made the discrete rewrite worth
   // doing in the first place.
   function updateDisplay() {
-    // Frozen entirely, not just during the 1s forced transition, while
-    // sitting on Kaltsit: "roadblock" means dead stop, art included, not
-    // just scroll position. A continuous wheel spin can still cause a
-    // little residual motion even with the gate's preventDefault (browser
-    // momentum doesn't always fully respect per-event prevention) — if
-    // this tracker keeps reacting to that residual motion, it can shift
-    // .active onto a neighboring card and fade Kaltsit to black mid-wheel,
-    // only settling back once the spin stops. Freezing here instead of
-    // trying to further tighten the lock closes it regardless of how much
-    // residual motion slips through.
-    if (endscreenLocked || currentIdx === kaltsitIdx) return;
+    // Only frozen during the swipe animation itself (endscreenLocked).
+    // An earlier version also froze for as long as currentIdx===kaltsitIdx
+    // — meant to protect against residual scroll motion fighting a
+    // JS-enforced preventDefault hold. That hold doesn't exist anymore:
+    // #outro is a permanent fixed panel contributing nothing to
+    // scrollHeight, so the browser's OWN scroll bound stops you at
+    // Kaltsit unconditionally, with no JS blocking (and so no residual
+    // -motion edge case) involved at all. Freezing on kaltsitIdx after
+    // that stopped being necessary caused a real bug instead: currentIdx
+    // only updates once scheduleSnap's debounce settles, up to 500ms
+    // after wheeling stops — so continuously scrolling AWAY from Kaltsit
+    // (ordinary backward navigation, nothing to do with the endscreen)
+    // kept the display frozen on Kaltsit's own art for the entire
+    // duration of the scroll, only updating once you actually stopped.
+    if (endscreenLocked) return;
 
     // Always shows WHICHEVER section is most visible right now, however
     // small that might be — never requires a minimum (e.g. >50%) before
@@ -474,7 +478,7 @@
   // ending is showing — both directions fully lock input for their
   // duration (endscreenLocked), matching a real Swiper transition where
   // you can't interrupt an in-flight slide.
-  const ENDING_DELAY_MS = 5000;
+  const ENDING_DELAY_MS = 1000;
   const SWIPE_MS = 900;
   let endscreenLocked = false;
   let revealTimer = null;
