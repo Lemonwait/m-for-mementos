@@ -7,10 +7,6 @@
   const total = MEMENTOS.length;
   const years = [...new Set(MEMENTOS.map((m) => m.year))];
 
-  // The one video ("Concept Trailer III") that plays automatically with a
-  // custom-styled seek bar instead of the plain click-to-load pattern
-  // every other video card uses -- see mountCustomPlayer() below.
-  const CUSTOM_AUTOPLAY_VIDEO_ID = "_fHizOtMLnM";
 
   // ---- build year rail ----
   const yearButtons = {};
@@ -48,25 +44,15 @@
       )
       .join("");
 
-    // Concept Trailer III (the one card with a no-click, autoplaying,
-    // custom-controlled player -- see CUSTOM_AUTOPLAY_VIDEO_ID below)
-    // gets no load button at all: its .yt-frame starts empty, and
-    // mountCustomPlayer() populates it once the card scrolls into view.
-    // Every other video card keeps the plain click-to-load button.
-    const isCustomVideo = m.video && m.video.id === CUSTOM_AUTOPLAY_VIDEO_ID;
+    // Every video card (any m.video, not just one special-cased ID) gets
+    // no load button at all: its .yt-frame starts empty, and
+    // mountCustomPlayer() populates it once the card scrolls into view --
+    // same no-click, autoplaying, custom-controlled treatment Concept
+    // Trailer III got first, now applied site-wide.
     const videoHtml = m.video
-      ? `<div class="yt-frame" data-yt-id="${escapeAttr(m.video.id)}" data-yt-start="${m.video.start}"${
-          m.video.end ? ` data-yt-end="${m.video.end}"` : ""
-        }>
-          ${
-            isCustomVideo
-              ? ""
-              : `<button class="yt-load-btn" type="button" aria-label="Load video">
-            <span class="yt-load-icon"></span>
-            <span class="yt-load-label">LOAD VIDEO</span>
-          </button>`
-          }
-        </div>`
+      ? `<div class="yt-frame" data-yt-id="${escapeAttr(m.video.id)}"${
+          m.video.start != null ? ` data-yt-start="${m.video.start}"` : ""
+        }${m.video.end != null ? ` data-yt-end="${m.video.end}"` : ""}></div>`
       : "";
 
     section.innerHTML = `
@@ -135,42 +121,14 @@
     }
   });
 
-  // ---- click-to-load YouTube background (only cards with m.video) ----
-  // Same pattern arknights.wiki.gg uses for its embeds: nothing loads until
-  // a real click. That's a genuine user gesture, which sidesteps browser
-  // autoplay policy entirely (not just the muted-autoplay allowance) and
-  // avoids the pile of intermittent failures scroll-triggered autoplay hit
-  // in testing (Error 153, "video unavailable", ad-blocker/Shields
-  // interference) — trading the ambient "plays as you scroll to it" effect
-  // for something that reliably works. Plain <iframe src="...">, not the JS
-  // IFrame Player API: that API loads a separate script
-  // (youtube.com/iframe_api) which ad blockers/privacy shields commonly
-  // block outright since it's the tracking-capable player API.
-  function buildYoutubeSrc(holder) {
-    const { ytId } = holder.dataset;
-    // Matches arknights.wiki.gg's own embed exactly, plus enablejsapi=1:
-    // just autoplay=1, no mute/controls=0/loop/playlist/start/end/rel.
-    // Their player isn't muted either — it doesn't need to be, since the
-    // iframe is only ever created inside a real click handler (a genuine
-    // user gesture), which browsers treat as permission for autoplay with
-    // sound, not just muted autoplay. enablejsapi=1 doesn't load the
-    // separate iframe_api script (still avoided here, same reasoning as
-    // before) — it just lets postMessage commands like pauseVideo reach
-    // this specific iframe, which is what the single-video/pause-on-
-    // scroll-out policy below needs to be able to stop one of these.
-    return `https://www.youtube-nocookie.com/embed/${ytId}?autoplay=1&enablejsapi=1`;
-  }
-
   // ---- only one video plays at a time, anywhere on the site ----
-  // A shared tracker spanning both kinds of player this page has: the
-  // custom-controlled one (Concept Trailer III, a real YT.Player with a
-  // direct .pauseVideo() method) and every plain <iframe> video (no JS
-  // API loaded for those, by design — controlled via postMessage's
-  // "command" protocol instead, which plain embeds respond to without
-  // needing the full API script). Whichever starts playing pauses
-  // whatever was previously playing; scrolling the currently-playing
-  // one's own card out of view also pauses it (see observeVideoVisibility
-  // below), so nothing keeps playing quietly off-screen either.
+  // Every video card (site-wide now, not just one special-cased ID) uses
+  // the same custom-controlled YT.Player -- see mountCustomPlayer below.
+  // This tracker is what enforces "only one plays": whichever starts
+  // playing pauses whatever was previously playing; scrolling the
+  // currently-playing one's own card out of view also pauses it (see
+  // observeVideoVisibility below), so nothing keeps playing quietly
+  // off-screen either.
   let currentlyPlaying = null; // { pause() } or null
   function pauseCurrentlyPlaying() {
     currentlyPlaying?.pause();
@@ -180,9 +138,6 @@
     if (currentlyPlaying === entry) return;
     pauseCurrentlyPlaying();
     currentlyPlaying = entry;
-  }
-  function postYtCommand(iframe, func) {
-    iframe.contentWindow?.postMessage(JSON.stringify({ event: "command", func, args: [] }), "*");
   }
   // Watches the .event SECTION (normal document flow, real scroll-based
   // geometry) rather than any position:fixed video layer itself, same
@@ -206,41 +161,6 @@
     obs.observe(section);
     return obs;
   }
-
-  function mountVideo(holder) {
-    if (holder.querySelector("iframe")) return;
-
-    holder.querySelector(".yt-load-btn")?.remove();
-
-    const iframe = document.createElement("iframe");
-    iframe.src = buildYoutubeSrc(holder);
-    iframe.title = "Video";
-    iframe.allow = "autoplay; encrypted-media; fullscreen";
-    iframe.allowFullscreen = true;
-    iframe.setAttribute("frameborder", "0");
-    // Error 153 is YouTube refusing to init the player when it sees no
-    // referrer on the request — explicit here in case a browser's privacy
-    // shields were stripping it by default despite a real http(s) origin.
-    iframe.referrerPolicy = "strict-origin-when-cross-origin";
-    iframe.addEventListener("load", () => {
-      holder.closest(".event-media")?.classList.add("video-ready");
-    });
-    holder.appendChild(iframe);
-    // No click-blocking shield this time: with real YouTube controls now
-    // visible (no controls=0), the visitor should actually be able to use
-    // them — pause, seek, volume, fullscreen — same as on the wiki.
-
-    // This one just started (autoplay=1, fired from a real click) --
-    // claim the single "currently playing" slot, pausing whatever else
-    // was playing, and start watching for it to scroll out of view.
-    const entry = { pause: () => postYtCommand(iframe, "pauseVideo") };
-    setCurrentlyPlaying(entry);
-    observeVideoVisibility(holder.closest(".event"), entry);
-  }
-
-  document.querySelectorAll(".yt-load-btn").forEach((btn) => {
-    btn.addEventListener("click", () => mountVideo(btn.closest(".yt-frame")));
-  });
 
   // ---- site-wide sound toggle ----
   // A real click anywhere on the page grants the browser's "sticky user
@@ -392,16 +312,25 @@
   // "time update" event the way a native <video> does, so a short
   // interval is the standard way to keep a custom seek bar's fill
   // visually in sync with real playback.
-  function startProgressLoop(player, controls, dragState) {
-    setInterval(() => {
-      if (dragState.isDragging()) return;
-      const duration = player.getDuration();
-      if (!duration) return;
-      const ratio = player.getCurrentTime() / duration;
-      controls.fill.style.width = `${ratio * 100}%`;
-      controls.handle.style.left = `${ratio * 100}%`;
-    }, 250);
-  }
+  //
+  // ONE shared interval for the whole page, not one per mounted player.
+  // With every PV on the site now getting a custom player (100+
+  // potential mounts over a long scroll), a per-player setInterval left
+  // running forever after each mount would keep compounding for the rest
+  // of the session. Only one video can ever be playing at a time anyway
+  // (see currentlyPlaying above), so only one entry's UI ever needs
+  // updating at once -- this just points at whichever that is.
+  let activeProgressUI = null; // { controls, player, dragState } or null
+  setInterval(() => {
+    if (!activeProgressUI) return;
+    const { controls, player, dragState } = activeProgressUI;
+    if (dragState.isDragging()) return;
+    const duration = player.getDuration();
+    if (!duration) return;
+    const ratio = player.getCurrentTime() / duration;
+    controls.fill.style.width = `${ratio * 100}%`;
+    controls.handle.style.left = `${ratio * 100}%`;
+  }, 250);
 
   function updatePlayPauseIcon(controls, playerState) {
     const playing = playerState === 1; // YT.PlayerState.PLAYING
@@ -448,43 +377,48 @@
         },
         onStateChange: (e) => {
           updatePlayPauseIcon(controls, e.data);
-          if (e.data === 1) setCurrentlyPlaying(entry); // PLAYING
+          if (e.data === 1) { // PLAYING
+            setCurrentlyPlaying(entry);
+            activeProgressUI = { controls, player, dragState };
+          }
         },
       },
     });
     const entry = { pause: () => player.pauseVideo() };
     customPlayers.push(player);
     const dragState = wireSeekTrack(controls, player);
-    startProgressLoop(player, controls, dragState);
     observeVideoVisibility(holder.closest(".event"), entry);
   }
 
-  // Watches the .event SECTION (normal document flow, real scroll-based
-  // geometry) rather than the .yt-frame itself (position:fixed, always
-  // "in the viewport" regardless of scroll -- see the same reasoning
-  // elsewhere for why fixed layers can't be observed this way). Same 0.5
-  // visibility threshold the rest of the app uses to mean "this is
-  // genuinely the thing on screen." Fires once, then disconnects --
-  // mountCustomPlayer itself is also idempotent (dataset.customMounted)
-  // as a second layer of protection.
-  const customVideoHolder = document.querySelector(
-    `.yt-frame[data-yt-id="${CUSTOM_AUTOPLAY_VIDEO_ID}"]`
-  );
-  if (customVideoHolder) {
-    const customVideoSection = customVideoHolder.closest(".event");
-    const customVideoObserver = new IntersectionObserver(
+  // Every video card (site-wide, not just one special-cased ID) gets the
+  // same auto-mount-on-scroll-into-view treatment Concept Trailer III got
+  // first. Watches the .event SECTION (normal document flow, real
+  // scroll-based geometry) rather than the .yt-frame itself
+  // (position:fixed, always "in the viewport" regardless of scroll -- see
+  // the same reasoning elsewhere for why fixed layers can't be observed
+  // this way). Same 0.5 visibility threshold the rest of the app uses to
+  // mean "this is genuinely the thing on screen." Each observer fires
+  // once, then disconnects -- mountCustomPlayer itself is also idempotent
+  // (dataset.customMounted) as a second layer of protection. One
+  // observer per video card rather than a single shared one: each needs
+  // its own disconnect-after-first-fire lifecycle and its own holder
+  // reference, and IntersectionObserver is designed to stay cheap at
+  // this kind of scale (a plain visibility watch, not per-frame work).
+  document.querySelectorAll(".yt-frame[data-yt-id]").forEach((holder) => {
+    const section = holder.closest(".event");
+    const observer = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
           if (entry.isIntersecting && entry.intersectionRatio > 0.5) {
-            customVideoObserver.disconnect();
-            setTimeout(() => mountCustomPlayer(customVideoHolder), 300);
+            observer.disconnect();
+            setTimeout(() => mountCustomPlayer(holder), 300);
           }
         });
       },
       { threshold: 0.5 }
     );
-    customVideoObserver.observe(customVideoSection);
-  }
+    observer.observe(section);
+  });
 
   // ---- year watermark: slot-machine digit roll on actual year change ----
   const yearWatermarkEl = document.getElementById("year-watermark");
