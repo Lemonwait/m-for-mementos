@@ -394,12 +394,16 @@ body{
 }
 .event-media img.loaded{ opacity: 1; }
 
-.event-media.has-video img{
-  transition: opacity 0.8s ease;
-}
-.event-media.has-video.video-ready img{
-  opacity: 0;
-}
+/* The still image underneath deliberately does NOT fade out when the
+   video becomes ready (video-ready class still added in app.js, just no
+   longer styled here) -- the video already sits above it in stacking
+   order, and playBurnReveal() masks the VIDEO itself with an organic,
+   animated noise threshold instead, so the still image needs to stay
+   fully crisp underneath as the backdrop showing through the mask's
+   not-yet-revealed holes. Fading it too would dim that backdrop and
+   flatten the contrast the burn edges depend on. Once the reveal
+   finishes the video is fully opaque anyway, so the image's own opacity
+   stops mattering at all from that point on. */
 
 .yt-frame{
   position: absolute;
@@ -408,11 +412,7 @@ body{
   pointer-events: auto;
 }
 .yt-frame iframe{
-  /* Plain full-fill, not the oversized cover-crop trick used for pure
-     background art: this video now shows YouTube's real controls (no
-     controls=0), so the visitor needs to actually be able to reach them —
-     blowing the iframe up past the visible crop would push the control bar
-     out of view entirely. */
+  /* Plain full-fill, filling the whole frame. */
   position: absolute;
   inset: 0;
   width: 100%;
@@ -424,12 +424,22 @@ body{
    every video card showed before mounting) -- removed now that every
    video card auto-mounts via mountCustomPlayer() in app.js instead. */
 
-/* Custom controls for the one auto-playing, no-click video (Concept
-   Trailer III) -- YouTube's own native control bar is turned off
-   (controls:0 in playerVars) for this specific player so this can
-   replace it, matching the site's own blue/dark theme instead of
-   YouTube's red/white chrome. Every other video card keeps the plain
-   iframe + native controls above, unaffected. */
+/* Sits above the raw iframe, below the controls bar -- intercepts every
+   click on the frame so it can never reach the actual YouTube iframe
+   underneath (see buildClickCatcher's comment in app.js for why that
+   matters: a direct click on the iframe triggers YouTube's own native
+   play/pause toggle and center icon flash even with controls:0). */
+.yt-click-catcher{
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  cursor: pointer;
+}
+
+/* Custom controls for every video card: YouTube's own native control bar
+   is turned off (controls:0 in playerVars) so this can replace it,
+   matching the site's own blue/dark theme instead of YouTube's red/white
+   chrome. */
 .yt-custom-controls{
   position: absolute;
   left: 0; right: 0; bottom: 0;

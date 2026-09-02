@@ -244,6 +244,24 @@
   // Builds the play/pause button + draggable seek track, appended into
   // the .yt-frame holder above the player itself (z-index in style.css).
   // Returns element refs the caller wires up once the real player exists.
+  // The click-catcher: a transparent layer covering the WHOLE frame,
+  // sitting above the raw iframe but below the controls bar in stacking
+  // order. Without it, only the bottom controls bar is ours -- the rest
+  // of the frame is a direct, unobstructed click target on the actual
+  // YouTube iframe underneath, and YouTube's player responds to a direct
+  // click (even with playerVars.controls:0) with its own native
+  // play/pause toggle AND the big center icon flash, plus other native
+  // overlays (cards/annotations) that controls:0 doesn't suppress either.
+  // This intercepts every click before it can ever reach the iframe, so
+  // none of that native chrome ever has a chance to appear -- confirmed
+  // live as the actual source of the center icon (see caller).
+  function buildClickCatcher(holder) {
+    const catcher = document.createElement("div");
+    catcher.className = "yt-click-catcher";
+    holder.appendChild(catcher);
+    return catcher;
+  }
+
   function buildCustomControls(holder) {
     const bar = document.createElement("div");
     bar.className = "yt-custom-controls";
@@ -338,20 +356,142 @@
     controls.iconPause.hidden = !playing;
   }
 
+  // ---- "burn" reveal: static image -> video, via an organic noise mask ----
+  // Disabled for now (the call site in mountCustomPlayer's onReady is
+  // commented out) -- shelved per explicit request to get the underlying
+  // player mechanics solid first, before layering visual polish back on.
+  // Left defined, not deleted, so it's a one-line change to bring back.
+  // Inspired by the dissolve/burn transitions at effects-burn.framer.website
+  // (a WebGL/canvas effect there -- no plain <img> in its DOM at all,
+  // confirmed by inspection -- so this is an original CSS/SVG approximation
+  // of the same visual idea, not a copy of their implementation, which
+  // isn't accessible anyway). An SVG feTurbulence filter generates organic
+  // noise; feComponentTransfer thresholds it into a hard-edged mask;
+  // animating that threshold over the reveal duration grows torn,
+  // irregular-edged holes through which the video (already sitting above
+  // the still image in stacking order) becomes visible, rather than a
+  // uniform wipe or fade. The video already covers the whole frame once
+  // fully revealed, so the still image underneath needs no fade of its
+  // own -- only the video's own mask needs to animate.
+  //
+  // Each call builds its OWN filter/mask with a unique id rather than
+  // sharing one: this can run on more than one video mounting in close
+  // succession (fast scrolling past several PV cards), and two reveals
+  // both writing to a single shared threshold attribute would fight each
+  // other. The small SVG fragment is removed again once the reveal
+  // finishes, along with the mask reference itself, so a fully-revealed
+  // video is in exactly the same DOM/style state as if it had never been
+  // masked at all.
+  let burnMaskCounter = 0;
+  function playBurnReveal(targetEl, durationMs) {
+    const id = `burn-${burnMaskCounter++}`;
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("width", "0");
+    svg.setAttribute("height", "0");
+    svg.style.position = "absolute";
+    svg.innerHTML = `
+      <defs>
+        <filter id="${id}-noise" x="-20%" y="-20%" width="140%" height="140%">
+          <feTurbulence type="fractalNoise" baseFrequency="0.015" numOctaves="4" seed="${Math.floor(Math.random() * 1000)}" result="noise"/>
+          <feColorMatrix in="noise" type="matrix"
+            values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  1 0 0 0 0" result="noiseAlpha"/>
+          <feComponentTransfer in="noiseAlpha">
+            <feFuncA id="${id}-func" type="linear" slope="25" intercept="-11"/>
+          </feComponentTransfer>
+        </filter>
+        <mask id="${id}-mask" maskUnits="objectBoundingBox">
+          <rect width="100%" height="100%" filter="url(#${id}-noise)" fill="#fff"/>
+        </mask>
+      </defs>
+    `;
+    document.body.appendChild(svg);
+    targetEl.style.mask = `url(#${id}-mask)`;
+    targetEl.style.webkitMask = `url(#${id}-mask)`;
+
+    const func = svg.querySelector(`#${id}-func`);
+    // slope=25 stays fixed; intercept is what actually sweeps the
+    // threshold. At -11 even the noise's brightest points fall below the
+    // alpha cutoff (fully masked); at 14 even its darkest points clear it
+    // (fully revealed) -- found by testing against the same slope in a
+    // standalone prototype before wiring this in.
+    const START = -11;
+    const END = 14;
+    const t0 = performance.now();
+    function tick(now) {
+      const p = Math.min(1, (now - t0) / durationMs);
+      const eased = 1 - Math.pow(1 - p, 3); // ease-out cubic
+      func.setAttribute("intercept", (START + (END - START) * eased).toFixed(3));
+      if (p < 1) {
+        requestAnimationFrame(tick);
+      } else {
+        targetEl.style.mask = "";
+        targetEl.style.webkitMask = "";
+        svg.remove();
+      }
+    }
+    requestAnimationFrame(tick);
+  }
+
+  // ---- cap how many players stay mounted at once ----
+  // Every mounted player is a real YouTube iframe -- a full embedded page,
+  // not a cheap DOM node -- and nothing was ever destroying old ones as
+  // the visitor scrolled past ("only one plays" only ever paused them).
+  // Across 126 potential videos in one long scroll, that meant every
+  // single one ever visited stayed alive in memory for the rest of the
+  // session (confirmed live: the tab reached 2.8GB). This keeps only the
+  // most recently mounted MAX_MOUNTED_VIDEOS around, destroying the
+  // oldest beyond that the moment a new one mounts -- an evicted card
+  // just reverts to its static image, and re-mounts normally (full
+  // burn-reveal and all) if scrolled back to later, same as if it had
+  // never been visited.
+  const MAX_MOUNTED_VIDEOS = 3;
+  const mountedQueue = []; // entries, oldest first
+
+  function unmountVideoPlayer(entry) {
+    const qIdx = mountedQueue.indexOf(entry);
+    if (qIdx !== -1) mountedQueue.splice(qIdx, 1);
+    if (currentlyPlaying === entry) currentlyPlaying = null;
+    if (activeProgressUI && activeProgressUI.player === entry.player) activeProgressUI = null;
+    const pIdx = customPlayers.indexOf(entry.player);
+    if (pIdx !== -1) customPlayers.splice(pIdx, 1);
+    entry.player.destroy(); // YT.Player's own teardown -- removes its iframe
+    entry.holder.innerHTML = ""; // drop the custom controls too
+    delete entry.holder.dataset.customMounted;
+  }
+
+  function enforceMountCap() {
+    while (mountedQueue.length > MAX_MOUNTED_VIDEOS) {
+      // Skip the currently-playing one even if it's the oldest in the
+      // queue -- shouldn't normally happen (scrolling to a new card
+      // pauses whatever was playing before it), but never yank the video
+      // literally in front of the visitor out from under them.
+      const target = mountedQueue.find((e) => e !== currentlyPlaying);
+      if (!target) break;
+      unmountVideoPlayer(target);
+    }
+  }
+
   async function mountCustomPlayer(holder) {
     if (holder.dataset.customMounted) return;
     holder.dataset.customMounted = "1";
     const { ytId, ytStart } = holder.dataset;
     const YT = await loadYoutubeApi();
+    // A card can scroll out and get evicted while the API script itself
+    // is still loading (real network time) -- if so, just bail rather
+    // than mounting a player into a holder nobody's watching anymore.
+    if (!holder.dataset.customMounted) return;
 
     const playerEl = document.createElement("div");
     holder.appendChild(playerEl);
+    const clickCatcher = buildClickCatcher(holder);
     const controls = buildCustomControls(holder);
-    controls.playPauseBtn.addEventListener("click", () => {
+    function togglePlayPause() {
       const state = player.getPlayerState();
       if (state === 1) player.pauseVideo();
       else player.playVideo();
-    });
+    }
+    controls.playPauseBtn.addEventListener("click", togglePlayPause);
+    clickCatcher.addEventListener("click", togglePlayPause);
 
     const player = new YT.Player(playerEl, {
       videoId: ytId,
@@ -384,10 +524,12 @@
         },
       },
     });
-    const entry = { pause: () => player.pauseVideo() };
+    const entry = { holder, player, pause: () => player.pauseVideo() };
     customPlayers.push(player);
     const dragState = wireSeekTrack(controls, player);
     observeVideoVisibility(holder.closest(".event"), entry);
+    mountedQueue.push(entry);
+    enforceMountCap();
   }
 
   // Every video card (site-wide, not just one special-cased ID) gets the
@@ -397,20 +539,20 @@
   // (position:fixed, always "in the viewport" regardless of scroll -- see
   // the same reasoning elsewhere for why fixed layers can't be observed
   // this way). Same 0.5 visibility threshold the rest of the app uses to
-  // mean "this is genuinely the thing on screen." Each observer fires
-  // once, then disconnects -- mountCustomPlayer itself is also idempotent
-  // (dataset.customMounted) as a second layer of protection. One
-  // observer per video card rather than a single shared one: each needs
-  // its own disconnect-after-first-fire lifecycle and its own holder
-  // reference, and IntersectionObserver is designed to stay cheap at
-  // this kind of scale (a plain visibility watch, not per-frame work).
+  // mean "this is genuinely the thing on screen."
+  //
+  // Deliberately NOT one-shot anymore (an earlier version disconnected
+  // after the first fire): now that mounted players can be evicted by
+  // enforceMountCap, a card needs to be able to mount again later if
+  // scrolled back to after being evicted, not just once ever. The
+  // dataset.customMounted check keeps re-firing intersections from doing
+  // anything while a card is already mounted.
   document.querySelectorAll(".yt-frame[data-yt-id]").forEach((holder) => {
     const section = holder.closest(".event");
     const observer = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
-          if (entry.isIntersecting && entry.intersectionRatio > 0.5) {
-            observer.disconnect();
+          if (entry.isIntersecting && entry.intersectionRatio > 0.5 && !holder.dataset.customMounted) {
             setTimeout(() => mountCustomPlayer(holder), 300);
           }
         });
@@ -662,8 +804,9 @@
   // distance" — that requires crossing the halfway point (~50% of a
   // viewport-tall card) before it flips, which felt like it took several
   // wheel ticks to turn a page. This is a flat, card-height-independent
-  // threshold, tuned to roughly 2 wheel ticks on real hardware.
-  const SNAP_COMMIT_PX = 70;
+  // threshold. Was 70 (roughly 2 wheel ticks on real hardware), halved to
+  // roughly 1 tick by explicit request.
+  const SNAP_COMMIT_PX = 35;
 
   let snapTimer = null;
   let gestureStartY = 0;
