@@ -179,16 +179,26 @@
   // geometry) rather than any position:fixed video layer itself, same
   // reasoning as everywhere else in this file that a fixed element can't
   // be observed this way (it's always "in the viewport" regardless of
-  // scroll). Pauses ONLY if this specific entry is still the one actually
-  // playing when it drops below the 0.5 threshold -- a card that scrolled
-  // away after something ELSE already took over playback shouldn't pause
-  // that newer video by mistake.
+  // scroll).
+  //
+  // Fully unmounts (not just pauses) the instant the card drops below the
+  // 0.5 threshold, per explicit request: scrolling away should reset a
+  // video to its untouched state, not remember a mid-playback timestamp
+  // to resume from later. unmountVideoPlayer() already does exactly that
+  // (destroy()s the real player and clears the mount flag), and scrolling
+  // back to the card re-triggers the normal mount observer below --
+  // static image, then the blinds reveal, then the video, from scratch,
+  // same as a first-ever visit. Unconditional (not gated on this being
+  // the currently-playing entry): a card that's merely mounted-but-paused
+  // (toggled off before scrolling away) should reset just the same as one
+  // that was actively playing.
   function observeVideoVisibility(section, entry) {
     const obs = new IntersectionObserver(
       (entries) => {
         entries.forEach((e) => {
-          if ((!e.isIntersecting || e.intersectionRatio <= 0.5) && currentlyPlaying === entry) {
-            pauseCurrentlyPlaying();
+          if (!e.isIntersecting || e.intersectionRatio <= 0.5) {
+            unmountVideoPlayer(entry);
+            obs.disconnect();
           }
         });
       },
@@ -549,15 +559,73 @@
     targetEl.style.mask = mask;
     targetEl.style.webkitMask = mask;
   }
-  function playBlindsReveal(targetEl, durationMs) {
+  // Starts the SAME instant mounting begins (called right after
+  // closeBlindsMask, before the YouTube API/player even starts loading),
+  // per explicit request -- previously this only started in onReady,
+  // i.e. after the video had already finished loading, so the whole load
+  // gap sat there as a static, unchanging image with nothing visibly
+  // happening. Now the reveal itself starts immediately, in parallel with
+  // the real (network-time, unpredictable) load.
+  //
+  // The obvious risk: if the bars fully open before the video is actually
+  // ready, the gaps reveal a still-blank/loading iframe instead of real
+  // video -- a different, worse flicker than the one this was meant to
+  // fix. RISE_CAP prevents that: the eased curve is free to run all the
+  // way to 1 if `isReadyFn()` is already true by the time it gets there
+  // (the common case -- API already cached from an earlier video, load is
+  // fast), but if it's NOT ready yet, progress freezes at RISE_CAP and
+  // simply holds (still clearly "opening," just not finished) until
+  // isReadyFn() flips true, at which point the SAME eased curve resumes
+  // from exactly where it froze (totalPaused shifts the clock so the
+  // frozen duration is excluded, not counted as elapsed time) -- a
+  // continuous curve, not a restart or a jump.
+  //
+  // Also the reason this checks targetEl.dataset.customMounted every
+  // tick: a card can now be scrolled away and reset (see
+  // observeVideoVisibility) before its video ever becomes ready, which
+  // clears that flag -- without this check, a reveal frozen at RISE_CAP
+  // waiting on a ready signal that will now never come would loop via
+  // requestAnimationFrame forever.
+  const BLINDS_RISE_CAP = 0.92;
+  // Every write to mask-image forces the browser to repaint the whole
+  // card -- fine on its own, but confirmed live: doing that on every
+  // single animation frame (~60/sec) WHILE the real YouTube iframe is
+  // simultaneously doing its own heavy work (its own page load, JS init,
+  // video decode startup) visibly janks, the two competing for
+  // main-thread time right as the reveal is playing. A hard-edged bar
+  // wipe doesn't need 60fps to read as smooth, so the mask is only
+  // actually written at BLINDS_WRITE_INTERVAL instead of every tick --
+  // the underlying progress (and the ready-gate/pause logic above) still
+  // advances every frame, only the expensive part is throttled, so this
+  // doesn't change the reveal's timing or sequencing at all.
+  const BLINDS_WRITE_INTERVAL = 40;
+  function playBlindsReveal(targetEl, durationMs, isReadyFn) {
     const t0 = performance.now();
+    let pausedSince = null;
+    let totalPaused = 0;
+    let lastWrite = 0;
     function tick(now) {
-      const p = Math.min(1, (now - t0) / durationMs);
+      if (!targetEl.dataset.customMounted) return;
+      if (pausedSince !== null) {
+        if (!isReadyFn()) {
+          requestAnimationFrame(tick);
+          return;
+        }
+        totalPaused += now - pausedSince;
+        pausedSince = null;
+      }
+      const p = Math.min(1, (now - t0 - totalPaused) / durationMs);
       const eased = 1 - Math.pow(1 - p, 3); // ease-out cubic, same feel as the burn reveal
-      const mask = buildBlindsMask(eased);
-      targetEl.style.mask = mask;
-      targetEl.style.webkitMask = mask;
-      if (p < 1) {
+      if (eased >= BLINDS_RISE_CAP && !isReadyFn()) {
+        pausedSince = now;
+      }
+      if (eased < 1) {
+        if (now - lastWrite >= BLINDS_WRITE_INTERVAL) {
+          lastWrite = now;
+          const mask = buildBlindsMask(eased);
+          targetEl.style.mask = mask;
+          targetEl.style.webkitMask = mask;
+        }
         requestAnimationFrame(tick);
       } else {
         // Fully revealed -- drop the mask entirely rather than leaving it
@@ -580,7 +648,7 @@
   // most recently mounted MAX_MOUNTED_VIDEOS around, destroying the
   // oldest beyond that the moment a new one mounts -- an evicted card
   // just reverts to its static image, and re-mounts normally (full
-  // burn-reveal and all) if scrolled back to later, same as if it had
+  // blinds reveal and all) if scrolled back to later, same as if it had
   // never been visited.
   const MAX_MOUNTED_VIDEOS = 3;
   const mountedQueue = []; // entries, oldest first
@@ -615,6 +683,13 @@
     // Closed before anything else -- see closeBlindsMask's own comment
     // for why this can't wait until onReady/playBlindsReveal.
     closeBlindsMask(holder);
+    // Started here, immediately, rather than from onReady -- see
+    // playBlindsReveal's own comment for why starting it in parallel with
+    // the load (instead of only after the load finishes) needed the
+    // ready-gate it now has. playerReady flips true in onReady below;
+    // isReadyFn reads it fresh every animation frame.
+    let playerReady = false;
+    playBlindsReveal(holder, 1600, () => playerReady);
     const { ytId, ytStart } = holder.dataset;
     const YT = await loadYoutubeApi();
     // A card can scroll out and get evicted while the API script itself
@@ -656,7 +731,7 @@
           if (soundEnabled) e.target.unMute();
           else e.target.mute();
           e.target.playVideo();
-          playBlindsReveal(holder, 1600);
+          playerReady = true;
         },
         onStateChange: (e) => {
           updatePlayPauseIcon(controls, e.data);
