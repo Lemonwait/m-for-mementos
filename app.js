@@ -112,6 +112,16 @@
   // it really was just network race position, not scroll position).
   // .event has no such override, so its geometry tracks real scroll
   // position the way rootMargin here assumes.
+  // 600px -> 4000px (roughly 4-5 card-heights) by request: confirmed live
+  // that fast scrolling can outrun a 600px head start entirely -- jumping
+  // straight past the margin before the fetch+decode has any real time to
+  // finish, landing on a card whose image request only just fired,
+  // showing as a dark/blank frame until it catches up (scrolling back
+  // over the same card again worked fine, since by then it was already
+  // cached -- confirming this was a load-timing race, not a rendering
+  // bug). Images are lightweight enough (see the fade-in transition's own
+  // sizing) that loading more of them ahead of actual need isn't a real
+  // cost the way it would be for video.
   const imgObserver = new IntersectionObserver(
     (entries, obs) => {
       entries.forEach((entry) => {
@@ -126,7 +136,7 @@
         }
       });
     },
-    { rootMargin: "600px 0px" }
+    { rootMargin: "4000px 0px" }
   );
   document.querySelectorAll(".event").forEach((section) => imgObserver.observe(section));
 

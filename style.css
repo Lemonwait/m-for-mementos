@@ -384,6 +384,14 @@ body{
      -- fading in alone with nothing to blend with. will-change hints the
      browser to handle the opacity change on its own layer. */
   will-change: opacity;
+  /* A DIFFERENT dark-screen cause than the one above (that one's about
+     two crossfading layers; this is about a card whose image genuinely
+     hasn't finished loading yet -- fast scrolling can outrun even the
+     lazy-loader's 4000px head start). The still-transparent <img> lets
+     this background show through until .loaded lands, so it reads as a
+     soft "still arriving" placeholder instead of a flat, seemingly-
+     broken black rectangle. */
+  background: radial-gradient(circle at 50% 42%, var(--panel), var(--bg) 72%);
 }
 .event.active .event-media{
   opacity: 1;
