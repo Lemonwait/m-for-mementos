@@ -659,7 +659,19 @@
   // just reverts to its static image, and re-mounts normally (full
   // blinds reveal and all) if scrolled back to later, same as if it had
   // never been visited.
-  const MAX_MOUNTED_VIDEOS = 3;
+  // Lowered from 3 to 0 by request, alongside removing the preload
+  // observer entirely (see below) -- confirmed live via 1.4GB Chrome
+  // memory usage that 3 real concurrent YouTube iframes (each one is
+  // basically its own heavy webpage, video decoder included) is a real
+  // cost, and preloading 1-2 videos ahead on top of the active one meant
+  // that cap was commonly sitting at its full 3 during ordinary scrolling.
+  // At 0, only ever the currently-active video (which enforceMountCap
+  // always protects regardless of this number -- see its own comment)
+  // stays mounted; nothing preloads ahead of it anymore. Trades away the
+  // instant/stall-free reveal preloading bought -- the blinds reveal's
+  // ready-gate will now actually hold and wait far more often, since
+  // there's no more head start on the load.
+  const MAX_MOUNTED_VIDEOS = 0;
   const mountedQueue = []; // entries, oldest first
   // Holder -> entry, so a holder that's already preloading (see
   // mountCustomPlayer/requestActivate below) can be looked up and
@@ -687,10 +699,21 @@
       // pauses whatever was playing before it), but never yank the video
       // literally in front of the visitor out from under them. Also skip
       // any other activated entry (playVideo() already called, even if
-      // the PLAYING state change hasn't landed yet) for the same reason
-      // -- only entries that are still just preloading in the background,
-      // never shown yet, are fair game for this cap.
-      const target = mountedQueue.find((e) => e !== currentlyPlaying && !e.activated);
+      // the PLAYING state change hasn't landed yet), AND anything already
+      // flagged _wantsActivate -- real, confirmed bug at MAX_MOUNTED_VIDEOS
+      // 0 without this: mountCustomPlayer calls enforceMountCap() BEFORE
+      // requestActivate() (entry.activated isn't true yet at that exact
+      // point, even for a card mounting specifically TO be shown
+      // immediately), so a plain !e.activated check let this evict the
+      // entry a caller was about to activate on the very next line,
+      // destroying its player out from under it before it ever got a
+      // chance to play. _wantsActivate is set synchronously, before that
+      // race window opens, so checking it here closes it. Only entries
+      // that are still just preloading in the background, never shown
+      // and never asked to be, are fair game for this cap.
+      const target = mountedQueue.find(
+        (e) => e !== currentlyPlaying && !e.activated && !e.holder._wantsActivate
+      );
       if (!target) break;
       unmountVideoPlayer(target);
     }
@@ -858,28 +881,15 @@
   document.querySelectorAll(".yt-frame[data-yt-id]").forEach((holder) => {
     const section = holder.closest(".event");
 
-    // Starts the real (slow, network-time) player load well before the
-    // card is anywhere near active -- same 600px head start the image
-    // lazy-loader already uses (see that observer's own comment for why
-    // watching the normal-flow .event section, not the position:fixed
-    // video layer, is what makes rootMargin mean anything geometrically
-    // meaningful here). autoplay is off at this point (see
-    // mountCustomPlayer's playerVars), so nothing is shown or heard --
-    // it's purely getting the slow part out of the way ahead of time, so
-    // that by the time the card below actually activates it, there's
-    // often nothing left to wait on.
-    const preloadObserver = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting && !holder.dataset.customMounted) {
-            mountCustomPlayer(holder, false);
-          }
-        });
-      },
-      { rootMargin: "600px 0px" }
-    );
-    preloadObserver.observe(section);
-
+    // The wider-margin preload observer (600px head start, same as the
+    // image lazy-loader) that used to live here is removed, by request,
+    // alongside MAX_MOUNTED_VIDEOS dropping to 0 above -- see that
+    // constant's own comment for the memory-vs-stall tradeoff being
+    // traded back the other way. mountCustomPlayer/requestActivate/
+    // engagePlayer still support being called ahead of activation
+    // (nothing here assumes it can't happen), so bringing preloading back
+    // later is just re-adding that observer, not restructuring anything.
+    //
     // Every video card (site-wide, not just one special-cased ID) gets
     // the same auto-reveal-on-scroll-into-view treatment Concept Trailer
     // III got first. Same 0.5 visibility threshold the rest of the app
@@ -892,11 +902,11 @@
     // ever.
     //
     // Reuses an already-preloading/preloaded entry via requestActivate()
-    // if the observer above already got to this holder first (the common
-    // case on an ordinary slow scroll); falls back to mounting AND
-    // activating together if not (a fast jump that skipped past the
-    // 600px preload window entirely) -- same as the original one-phase
-    // behavior.
+    // on the rare chance one exists (nothing preloads anymore, but a
+    // fast back-and-forth scroll could still leave one from a moment
+    // ago); falls back to mounting AND activating together otherwise --
+    // now the overwhelmingly common path, same as the original,
+    // pre-preload one-phase behavior.
     const activateObserver = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
