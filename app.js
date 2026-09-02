@@ -652,6 +652,10 @@
   // never been visited.
   const MAX_MOUNTED_VIDEOS = 3;
   const mountedQueue = []; // entries, oldest first
+  // Holder -> entry, so a holder that's already preloading (see
+  // mountCustomPlayer/requestActivate below) can be looked up and
+  // activated later without creating a second player for it.
+  const entryByHolder = new Map();
 
   function unmountVideoPlayer(entry) {
     const qIdx = mountedQueue.indexOf(entry);
@@ -663,6 +667,8 @@
     entry.player.destroy(); // YT.Player's own teardown -- removes its iframe
     entry.holder.innerHTML = ""; // drop the custom controls too
     delete entry.holder.dataset.customMounted;
+    delete entry.holder._wantsActivate;
+    entryByHolder.delete(entry.holder);
   }
 
   function enforceMountCap() {
@@ -670,26 +676,63 @@
       // Skip the currently-playing one even if it's the oldest in the
       // queue -- shouldn't normally happen (scrolling to a new card
       // pauses whatever was playing before it), but never yank the video
-      // literally in front of the visitor out from under them.
-      const target = mountedQueue.find((e) => e !== currentlyPlaying);
+      // literally in front of the visitor out from under them. Also skip
+      // any other activated entry (playVideo() already called, even if
+      // the PLAYING state change hasn't landed yet) for the same reason
+      // -- only entries that are still just preloading in the background,
+      // never shown yet, are fair game for this cap.
+      const target = mountedQueue.find((e) => e !== currentlyPlaying && !e.activated);
       if (!target) break;
       unmountVideoPlayer(target);
     }
   }
 
-  async function mountCustomPlayer(holder) {
+  // Splits "load the player" from "actually show and play it" -- lets a
+  // video start its real, slow part (the YouTube iframe/JS load) well
+  // before the card is the active one (see the wider-margin preload
+  // observer below), so that by the time it DOES become active, there's
+  // often nothing left to wait on at all.
+  //
+  // requestActivate() is what a card becoming genuinely active always
+  // calls, whether or not a preload got a head start on it first:
+  //   - starts the blinds reveal immediately, exactly like before --
+  //     playBlindsReveal's own ready-gate already handles "still loading"
+  //     gracefully, so there's no need to wait for readiness here too.
+  //   - engages the actual player (unmute/mute, playVideo()) once ready
+  //     -- either right away if preloading already finished, or via
+  //     onReady's own wantsActivate check below if it's still in flight.
+  // Both entry.revealStarted and entry.activated guard against doing
+  // either part twice, since this can legitimately be called more than
+  // once for the same entry (see the activation observer).
+  function requestActivate(entry) {
+    entry.holder._wantsActivate = true;
+    if (!entry.revealStarted) {
+      entry.revealStarted = true;
+      playBlindsReveal(entry.holder, 1600, () => entry.ready);
+    }
+    if (entry.ready) engagePlayer(entry);
+  }
+  function engagePlayer(entry) {
+    if (entry.activated) return;
+    entry.activated = true;
+    if (soundEnabled) entry.player.unMute();
+    else entry.player.mute();
+    entry.player.playVideo();
+    // Only now does a scroll-out mean anything to reset -- a preload that
+    // never got shown just sits in mountedQueue until the cap reclaims
+    // it (see enforceMountCap), same as it always could.
+    observeVideoVisibility(entry.holder.closest(".event"), entry);
+  }
+
+  async function mountCustomPlayer(holder, activateImmediately) {
     if (holder.dataset.customMounted) return;
     holder.dataset.customMounted = "1";
     // Closed before anything else -- see closeBlindsMask's own comment
-    // for why this can't wait until onReady/playBlindsReveal.
+    // for why this can't wait until onReady/playBlindsReveal. Harmless to
+    // do this even for a background preload that may never become
+    // active: resting state is closed either way.
     closeBlindsMask(holder);
-    // Started here, immediately, rather than from onReady -- see
-    // playBlindsReveal's own comment for why starting it in parallel with
-    // the load (instead of only after the load finishes) needed the
-    // ready-gate it now has. playerReady flips true in onReady below;
-    // isReadyFn reads it fresh every animation frame.
-    let playerReady = false;
-    playBlindsReveal(holder, 1600, () => playerReady);
+    if (activateImmediately) holder._wantsActivate = true;
     const { ytId, ytStart } = holder.dataset;
     const YT = await loadYoutubeApi();
     // A card can scroll out and get evicted while the API script itself
@@ -712,7 +755,12 @@
     const player = new YT.Player(playerEl, {
       videoId: ytId,
       playerVars: {
-        autoplay: 1,
+        // autoplay is 0 now, not 1 -- this can be constructed well before
+        // the card is active (see the preload observer below), and it
+        // must NOT start playing (audibly or not) until it genuinely is.
+        // requestActivate()/engagePlayer() calls playVideo() explicitly
+        // once that's actually true.
+        autoplay: 0,
         controls: 0,
         mute: soundEnabled ? 0 : 1,
         rel: 0,
@@ -722,16 +770,13 @@
         start: ytStart ? Number(ytStart) : undefined,
       },
       events: {
-        onReady: (e) => {
+        onReady: () => {
           holder.closest(".event-media")?.classList.add("video-ready");
-          // Belt-and-suspenders: playerVars.mute already set the initial
-          // state, but re-asserting here covers the case where
-          // soundEnabled changed in the moment between construction and
-          // ready (a click on the toggle right as this was loading).
-          if (soundEnabled) e.target.unMute();
-          else e.target.mute();
-          e.target.playVideo();
-          playerReady = true;
+          entry.ready = true;
+          // Covers the case where the card became active WHILE this was
+          // still loading -- requestActivate already ran then (setting
+          // holder._wantsActivate) but couldn't engage the player yet.
+          if (holder._wantsActivate) engagePlayer(entry);
         },
         onStateChange: (e) => {
           updatePlayPauseIcon(controls, e.data);
@@ -742,42 +787,85 @@
         },
       },
     });
-    const entry = { holder, player, pause: () => player.pauseVideo() };
+    const entry = {
+      holder, player,
+      pause: () => player.pauseVideo(),
+      ready: false, activated: false, revealStarted: false,
+    };
+    entryByHolder.set(holder, entry);
     customPlayers.push(player);
     const dragState = wireSeekTrack(controls, player);
-    observeVideoVisibility(holder.closest(".event"), entry);
     mountedQueue.push(entry);
     enforceMountCap();
+    // Checks the LIVE flag, not just the activateImmediately parameter
+    // this particular call got: the activation observer can fire (and
+    // set holder._wantsActivate itself, via its own "entry not found yet"
+    // fallback) at any point during the `await` above, for a call that
+    // started out as activateImmediately=false.
+    if (activateImmediately || holder._wantsActivate) requestActivate(entry);
   }
 
-  // Every video card (site-wide, not just one special-cased ID) gets the
-  // same auto-mount-on-scroll-into-view treatment Concept Trailer III got
-  // first. Watches the .event SECTION (normal document flow, real
-  // scroll-based geometry) rather than the .yt-frame itself
-  // (position:fixed, always "in the viewport" regardless of scroll -- see
-  // the same reasoning elsewhere for why fixed layers can't be observed
-  // this way). Same 0.5 visibility threshold the rest of the app uses to
-  // mean "this is genuinely the thing on screen."
-  //
-  // Deliberately NOT one-shot anymore (an earlier version disconnected
-  // after the first fire): now that mounted players can be evicted by
-  // enforceMountCap, a card needs to be able to mount again later if
-  // scrolled back to after being evicted, not just once ever. The
-  // dataset.customMounted check keeps re-firing intersections from doing
-  // anything while a card is already mounted.
   document.querySelectorAll(".yt-frame[data-yt-id]").forEach((holder) => {
     const section = holder.closest(".event");
-    const observer = new IntersectionObserver(
+
+    // Starts the real (slow, network-time) player load well before the
+    // card is anywhere near active -- same 600px head start the image
+    // lazy-loader already uses (see that observer's own comment for why
+    // watching the normal-flow .event section, not the position:fixed
+    // video layer, is what makes rootMargin mean anything geometrically
+    // meaningful here). autoplay is off at this point (see
+    // mountCustomPlayer's playerVars), so nothing is shown or heard --
+    // it's purely getting the slow part out of the way ahead of time, so
+    // that by the time the card below actually activates it, there's
+    // often nothing left to wait on.
+    const preloadObserver = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
-          if (entry.isIntersecting && entry.intersectionRatio > 0.5 && !holder.dataset.customMounted) {
-            setTimeout(() => mountCustomPlayer(holder), 300);
+          if (entry.isIntersecting && !holder.dataset.customMounted) {
+            mountCustomPlayer(holder, false);
+          }
+        });
+      },
+      { rootMargin: "600px 0px" }
+    );
+    preloadObserver.observe(section);
+
+    // Every video card (site-wide, not just one special-cased ID) gets
+    // the same auto-reveal-on-scroll-into-view treatment Concept Trailer
+    // III got first. Same 0.5 visibility threshold the rest of the app
+    // uses to mean "this is genuinely the thing on screen."
+    //
+    // Deliberately NOT one-shot (an earlier version disconnected after
+    // the first fire): now that mounted players can be evicted by
+    // enforceMountCap or reset by observeVideoVisibility, a card needs to
+    // be able to activate again later if scrolled back to, not just once
+    // ever.
+    //
+    // Reuses an already-preloading/preloaded entry via requestActivate()
+    // if the observer above already got to this holder first (the common
+    // case on an ordinary slow scroll); falls back to mounting AND
+    // activating together if not (a fast jump that skipped past the
+    // 600px preload window entirely) -- same as the original one-phase
+    // behavior.
+    const activateObserver = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting && entry.intersectionRatio > 0.5) {
+            setTimeout(() => {
+              if (holder.dataset.customMounted) {
+                const e = entryByHolder.get(holder);
+                if (e) requestActivate(e);
+                else holder._wantsActivate = true; // still mid-preload-load; mountCustomPlayer's onReady picks this up
+              } else {
+                mountCustomPlayer(holder, true);
+              }
+            }, 300);
           }
         });
       },
       { threshold: 0.5 }
     );
-    observer.observe(section);
+    activateObserver.observe(section);
   });
 
   // ---- year watermark: slot-machine digit roll on actual year change ----
