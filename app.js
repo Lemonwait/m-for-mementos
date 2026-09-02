@@ -734,9 +734,21 @@
     // through instead of starting fresh.
     const { ytStart } = entry.holder.dataset;
     entry.player.seekTo(ytStart ? Number(ytStart) : 0, true);
+    // playVideo() BEFORE unMute(), not after -- a real, confirmed bug in
+    // the other order: on a genuinely fresh page load (no click anywhere
+    // yet, so no sticky activation), unmuting first meant this resumed
+    // playVideo() call was asking the browser for unmuted-playback-via-
+    // script, no gesture behind it -- exactly what autoplay policy
+    // blocks, silently, leaving YouTube's own paused/thumbnail state on
+    // screen instead of playing at all ("doesn't autoplay unless I click
+    // the harmony waves" -- that click is what supplies the missing
+    // activation, papering over this exact ordering bug). Resuming
+    // muted first is unconditionally allowed regardless of activation;
+    // unmuting AFTER, on media that's already playing, isn't held to the
+    // same restriction.
+    entry.player.playVideo();
     if (soundEnabled) entry.player.unMute();
     else entry.player.mute();
-    entry.player.playVideo();
     // Only now does a scroll-out mean anything to reset -- a preload that
     // never got shown just sits in mountedQueue until the cap reclaims
     // it (see enforceMountCap), same as it always could.
