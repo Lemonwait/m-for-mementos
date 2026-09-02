@@ -148,15 +148,63 @@
   // block outright since it's the tracking-capable player API.
   function buildYoutubeSrc(holder) {
     const { ytId } = holder.dataset;
-    // Matches arknights.wiki.gg's own embed exactly: just autoplay=1, no
-    // mute/controls=0/loop/playlist/start/end/rel. Their player isn't muted
-    // either — it doesn't need to be, since the iframe is only ever created
-    // inside a real click handler (a genuine user gesture), which browsers
-    // treat as permission for autoplay with sound, not just muted autoplay.
-    // This drops the trimmed/looping/chromeless ambient-background effect
-    // in favor of matching a pattern already proven reliable on the wiki —
-    // a full, normal, controllable embedded video once you click to load it.
-    return `https://www.youtube-nocookie.com/embed/${ytId}?autoplay=1`;
+    // Matches arknights.wiki.gg's own embed exactly, plus enablejsapi=1:
+    // just autoplay=1, no mute/controls=0/loop/playlist/start/end/rel.
+    // Their player isn't muted either — it doesn't need to be, since the
+    // iframe is only ever created inside a real click handler (a genuine
+    // user gesture), which browsers treat as permission for autoplay with
+    // sound, not just muted autoplay. enablejsapi=1 doesn't load the
+    // separate iframe_api script (still avoided here, same reasoning as
+    // before) — it just lets postMessage commands like pauseVideo reach
+    // this specific iframe, which is what the single-video/pause-on-
+    // scroll-out policy below needs to be able to stop one of these.
+    return `https://www.youtube-nocookie.com/embed/${ytId}?autoplay=1&enablejsapi=1`;
+  }
+
+  // ---- only one video plays at a time, anywhere on the site ----
+  // A shared tracker spanning both kinds of player this page has: the
+  // custom-controlled one (Concept Trailer III, a real YT.Player with a
+  // direct .pauseVideo() method) and every plain <iframe> video (no JS
+  // API loaded for those, by design — controlled via postMessage's
+  // "command" protocol instead, which plain embeds respond to without
+  // needing the full API script). Whichever starts playing pauses
+  // whatever was previously playing; scrolling the currently-playing
+  // one's own card out of view also pauses it (see observeVideoVisibility
+  // below), so nothing keeps playing quietly off-screen either.
+  let currentlyPlaying = null; // { pause() } or null
+  function pauseCurrentlyPlaying() {
+    currentlyPlaying?.pause();
+    currentlyPlaying = null;
+  }
+  function setCurrentlyPlaying(entry) {
+    if (currentlyPlaying === entry) return;
+    pauseCurrentlyPlaying();
+    currentlyPlaying = entry;
+  }
+  function postYtCommand(iframe, func) {
+    iframe.contentWindow?.postMessage(JSON.stringify({ event: "command", func, args: [] }), "*");
+  }
+  // Watches the .event SECTION (normal document flow, real scroll-based
+  // geometry) rather than any position:fixed video layer itself, same
+  // reasoning as everywhere else in this file that a fixed element can't
+  // be observed this way (it's always "in the viewport" regardless of
+  // scroll). Pauses ONLY if this specific entry is still the one actually
+  // playing when it drops below the 0.5 threshold -- a card that scrolled
+  // away after something ELSE already took over playback shouldn't pause
+  // that newer video by mistake.
+  function observeVideoVisibility(section, entry) {
+    const obs = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((e) => {
+          if ((!e.isIntersecting || e.intersectionRatio <= 0.5) && currentlyPlaying === entry) {
+            pauseCurrentlyPlaying();
+          }
+        });
+      },
+      { threshold: 0.5 }
+    );
+    obs.observe(section);
+    return obs;
   }
 
   function mountVideo(holder) {
@@ -181,6 +229,13 @@
     // No click-blocking shield this time: with real YouTube controls now
     // visible (no controls=0), the visitor should actually be able to use
     // them — pause, seek, volume, fullscreen — same as on the wiki.
+
+    // This one just started (autoplay=1, fired from a real click) --
+    // claim the single "currently playing" slot, pausing whatever else
+    // was playing, and start watching for it to scroll out of view.
+    const entry = { pause: () => postYtCommand(iframe, "pauseVideo") };
+    setCurrentlyPlaying(entry);
+    observeVideoVisibility(holder.closest(".event"), entry);
   }
 
   document.querySelectorAll(".yt-load-btn").forEach((btn) => {
@@ -196,8 +251,16 @@
   // gesture: it both flips the visible on/off state AND is what makes a
   // LATER, click-free autoplay-with-sound (Concept Trailer III) actually
   // work, rather than silently getting blocked.
+  //
+  // Defaults to on (matching the button's own aria-pressed="true" in the
+  // HTML): the actual audio on page load is still entirely governed by
+  // the browser's own autoplay policy regardless of this default (there's
+  // no gesture yet at load time, so Concept Trailer III still falls back
+  // to muted the same as before if reached before any click happens) --
+  // this only changes the STATED intent so a later click-driven unmute
+  // isn't needed just to reach the state the site should start in.
   const soundToggleBtn = document.getElementById("sound-toggle");
-  let soundEnabled = false;
+  let soundEnabled = true;
   const customPlayers = []; // YT.Player instances under custom control
   function setSoundEnabled(on) {
     soundEnabled = on;
@@ -208,6 +271,24 @@
     });
   }
   soundToggleBtn.addEventListener("click", () => setSoundEnabled(!soundEnabled));
+
+  // Pressing Space is the browser's native "scroll down ~one page"
+  // shortcut -- with every card sized min-height:100vh, that lands
+  // roughly on the next card, reading as "space jumps to the next event."
+  // Reasonable default, but not while something's actually playing: in
+  // that case Space pausing the video is the more useful, expected
+  // behavior (matches YouTube's own site), so the native scroll is
+  // suppressed specifically for that one case. Left alone (no
+  // preventDefault) when a focused element would normally use Space
+  // itself (a button's own activate-on-space).
+  window.addEventListener("keydown", (e) => {
+    if (e.code !== "Space" || !currentlyPlaying) return;
+    const active = document.activeElement;
+    const tag = active?.tagName;
+    if (tag === "BUTTON" || tag === "INPUT" || tag === "TEXTAREA" || active?.isContentEditable) return;
+    e.preventDefault();
+    pauseCurrentlyPlaying();
+  });
 
   // ---- custom-controlled autoplay video (Concept Trailer III only) ----
   // Loads the real YouTube JS IFrame Player API (youtube.com/iframe_api),
@@ -365,12 +446,17 @@
           else e.target.mute();
           e.target.playVideo();
         },
-        onStateChange: (e) => updatePlayPauseIcon(controls, e.data),
+        onStateChange: (e) => {
+          updatePlayPauseIcon(controls, e.data);
+          if (e.data === 1) setCurrentlyPlaying(entry); // PLAYING
+        },
       },
     });
+    const entry = { pause: () => player.pauseVideo() };
     customPlayers.push(player);
     const dragState = wireSeekTrack(controls, player);
     startProgressLoop(player, controls, dragState);
+    observeVideoVisibility(holder.closest(".event"), entry);
   }
 
   // Watches the .event SECTION (normal document flow, real scroll-based
