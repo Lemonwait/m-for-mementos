@@ -231,9 +231,16 @@
   function setSoundEnabled(on) {
     soundEnabled = on;
     soundToggleBtn.setAttribute("aria-pressed", String(on));
+    // Defensive: confirmed live crash otherwise (Uncaught TypeError:
+    // player.mute is not a function), from a player pushed into
+    // customPlayers before its postMessage API bridge to the iframe was
+    // actually ready. The mountCustomPlayer race this could ride along
+    // with is fixed separately (see its own comment), but guarding the
+    // call itself means one still-initializing player can't crash every
+    // OTHER already-working one in the same forEach pass.
     customPlayers.forEach((player) => {
-      if (on) player.unMute();
-      else player.mute();
+      if (on && typeof player.unMute === "function") player.unMute();
+      else if (!on && typeof player.mute === "function") player.mute();
     });
   }
   soundToggleBtn.addEventListener("click", () => setSoundEnabled(!soundEnabled));
@@ -781,6 +788,23 @@
   async function mountCustomPlayer(holder, activateImmediately) {
     if (holder.dataset.customMounted) return;
     holder.dataset.customMounted = "1";
+    // A real, confirmed bug otherwise: dataset.customMounted alone can't
+    // tell THIS call apart from a LATER one for the same holder. Speeding
+    // down then back up fast enough unmounts a holder (clearing the
+    // flag) and re-mounts it again (setting it right back to "1") while
+    // the FIRST call is still sitting in the `await` below -- that first
+    // call's own bail-out check then sees the flag as truthy again (set
+    // by the second call) and wrongly proceeds, building a second,
+    // never-tracked YT.Player for the same holder. That orphan never
+    // gets destroy()'d (nothing references it to unmount later), so its
+    // own internal postMessage polling runs forever (confirmed live:
+    // thousands of failed postMessage warnings tracing back to this
+    // function), and it can leave customPlayers holding a reference
+    // whose mute()/unMute() aren't callable, crashing the sound toggle.
+    // A per-holder token makes a call verifiably tell whether it's still
+    // the current one after the await, not just whether SOME mount is
+    // active.
+    const myToken = (holder._mountToken = (holder._mountToken || 0) + 1);
     // Closed before anything else -- see closeBlindsMask's own comment
     // for why this can't wait until onReady/playBlindsReveal. Harmless to
     // do this even for a background preload that may never become
@@ -789,10 +813,12 @@
     if (activateImmediately) holder._wantsActivate = true;
     const { ytId, ytStart } = holder.dataset;
     const YT = await loadYoutubeApi();
-    // A card can scroll out and get evicted while the API script itself
-    // is still loading (real network time) -- if so, just bail rather
-    // than mounting a player into a holder nobody's watching anymore.
-    if (!holder.dataset.customMounted) return;
+    // A card can scroll out and get evicted (or unmount and remount)
+    // while the API script itself is still loading (real network time)
+    // -- if so, just bail rather than mounting a player into a holder
+    // nobody's watching anymore, or duplicating one a newer call is
+    // already building.
+    if (holder._mountToken !== myToken) return;
 
     const playerEl = document.createElement("div");
     holder.appendChild(playerEl);
