@@ -96,22 +96,39 @@
   // late to start loading an image that's about to scroll into view has
   // no correctness consequence — nothing downstream depends on exactly
   // when it fires the way the counter/roadblock used to.
+  //
+  // Watches .event (plain normal-flow document position) rather than the
+  // img itself -- confirmed live bug: the img's own ancestor .event-media
+  // is position:fixed, inset:0 (deliberately -- see its own comment in
+  // style.css for why), which pins it to the viewport rectangle from the
+  // instant the page loads, geometrically "intersecting" regardless of
+  // scroll position. Observing it directly meant EVERY image's src got
+  // set at once on page load (confirmed: all 131 already .complete with
+  // zero scrolling), not lazily as each card was approached -- 131
+  // concurrent requests racing each other, with whichever finished last
+  // popping in its own late 0.6s fade whenever it happened to land,
+  // unrelated to which card was actually on screen at the time (reported
+  // as a flicker that felt inconsistent/scroll-speed-dependent, because
+  // it really was just network race position, not scroll position).
+  // .event has no such override, so its geometry tracks real scroll
+  // position the way rootMargin here assumes.
   const imgObserver = new IntersectionObserver(
     (entries, obs) => {
       entries.forEach((entry) => {
         if (entry.isIntersecting) {
-          const img = entry.target;
-          if (img.dataset.src && !img.src) {
+          const section = entry.target;
+          const img = section.querySelector(".event-media img");
+          if (img && img.dataset.src && !img.src) {
             img.src = img.dataset.src;
             img.addEventListener("load", () => img.classList.add("loaded"));
           }
-          obs.unobserve(img);
+          obs.unobserve(section);
         }
       });
     },
     { rootMargin: "600px 0px" }
   );
-  document.querySelectorAll(".event-media img").forEach((img) => imgObserver.observe(img));
+  document.querySelectorAll(".event").forEach((section) => imgObserver.observe(section));
 
   // eager-load the first couple of hero images
   document.querySelectorAll(".event-media img").forEach((img, idx) => {
@@ -129,7 +146,7 @@
   // currently-playing one's own card out of view also pauses it (see
   // observeVideoVisibility below), so nothing keeps playing quietly
   // off-screen either.
-  let currentlyPlaying = null; // { pause() } or null
+  let currentlyPlaying = null; // { pause(), player } or null
   function pauseCurrentlyPlaying() {
     currentlyPlaying?.pause();
     currentlyPlaying = null;
@@ -138,6 +155,25 @@
     if (currentlyPlaying === entry) return;
     pauseCurrentlyPlaying();
     currentlyPlaying = entry;
+  }
+  // Toggles ONE entry's play/pause state without touching currentlyPlaying
+  // at all -- deliberately separate from pauseCurrentlyPlaying, which
+  // NULLS the reference (correct for "something else took over" or
+  // "scrolled off-screen," where the video genuinely stops being
+  // relevant). A user-initiated pause (this button, or Space) is not
+  // that: the video is still the one on screen, just paused, and needs
+  // to stay tracked so a SECOND toggle (resume) has something to act on.
+  // This was a real, confirmed bug: the button and Space used to call
+  // pauseCurrentlyPlaying() directly, which cleared currentlyPlaying on
+  // the very first pause -- the very next Space press then found nothing
+  // tracked, silently skipped all handling, and fell through to the
+  // browser's native "scroll down" default, reading as "Space doesn't
+  // pause, it jumps to the next slide" (exactly as reported).
+  function toggleEntry(entry) {
+    if (!entry) return;
+    const state = entry.player.getPlayerState();
+    if (state === 1) entry.player.pauseVideo();
+    else entry.player.playVideo();
   }
   // Watches the .event SECTION (normal document flow, real scroll-based
   // geometry) rather than any position:fixed video layer itself, same
@@ -196,18 +232,28 @@
   // shortcut -- with every card sized min-height:100vh, that lands
   // roughly on the next card, reading as "space jumps to the next event."
   // Reasonable default, but not while something's actually playing: in
-  // that case Space pausing the video is the more useful, expected
+  // that case Space toggling the video is the more useful, expected
   // behavior (matches YouTube's own site), so the native scroll is
   // suppressed specifically for that one case. Left alone (no
   // preventDefault) when a focused element would normally use Space
   // itself (a button's own activate-on-space).
+  //
+  // Calls toggleEntry, NOT pauseCurrentlyPlaying -- a real, confirmed bug
+  // when this called pauseCurrentlyPlaying directly: that function NULLS
+  // currentlyPlaying (correct for "something else took over" or
+  // "scrolled off-screen," but not for "the user just paused it and
+  // wants to resume"). The first Space press paused correctly, but wiped
+  // the tracked reference doing it -- the very next Space press then
+  // found nothing tracked, skipped all handling, and fell through to the
+  // native scroll-down default. Read exactly as reported: "doesn't
+  // pause/unpause, just jumps to the next slide."
   window.addEventListener("keydown", (e) => {
     if (e.code !== "Space" || !currentlyPlaying) return;
     const active = document.activeElement;
     const tag = active?.tagName;
     if (tag === "BUTTON" || tag === "INPUT" || tag === "TEXTAREA" || active?.isContentEditable) return;
     e.preventDefault();
-    pauseCurrentlyPlaying();
+    toggleEntry(currentlyPlaying);
   });
 
   // ---- custom-controlled autoplay video (Concept Trailer III only) ----
@@ -236,14 +282,24 @@
       };
       const script = document.createElement("script");
       script.src = "https://www.youtube.com/iframe_api";
+      // Dynamically-created scripts are already async by default (unlike
+      // a plain <script> tag in the HTML), so this doesn't change actual
+      // behavior -- set explicitly anyway so that's true by design, not
+      // by an easy-to-miss browser default someone could break later by
+      // switching to a static tag.
+      script.async = true;
       document.head.appendChild(script);
     });
     return ytApiPromise;
   }
 
-  // Builds the play/pause button + draggable seek track, appended into
-  // the .yt-frame holder above the player itself (z-index in style.css).
-  // Returns element refs the caller wires up once the real player exists.
+  // A cover-the-whole-frame trick (hideNativeFeedback) used to live here,
+  // briefly hiding the video to mask YouTube's native center play/pause
+  // icon flash on every state change. Removed per explicit request -- the
+  // cover's own fade in/out read as two flickers of its own, arguably
+  // worse than just eating YouTube's one native icon flash. See
+  // git history if it's worth revisiting.
+
   // The click-catcher: a transparent layer covering the WHOLE frame,
   // sitting above the raw iframe but below the controls bar in stacking
   // order. Without it, only the bottom controls bar is ours -- the rest
@@ -432,6 +488,88 @@
     requestAnimationFrame(tick);
   }
 
+  // ---- "blinds" reveal: static image -> video, via animated vertical bars ----
+  // PowerPoint's "Blinds" transition, replicated as an original CSS mask
+  // (not a reference to PowerPoint's own closed-source implementation --
+  // just the same generic, decades-old visual idea: vertical bars that
+  // each open from their own center, all in sync). Same underlying trick
+  // as playBurnReveal above -- the video already sits above the still
+  // image in stacking order, so masking only the video's own frame is
+  // enough; the image shows through wherever the mask hasn't opened yet,
+  // and needs no fade of its own. See playBurnReveal's comment for why
+  // that's true.
+  //
+  // Built from BLIND_BARS explicit gradient stops rather than a
+  // repeating-linear-gradient: a repeating gradient's repeat unit is
+  // measured against the actual pixel distance between its first and
+  // last color stop, not the percentages written in the stops themselves
+  // -- at an arbitrary card width that repeats an unpredictable number of
+  // times. Generating every bar's stops directly sidesteps that and stays
+  // exact at any width.
+  const BLIND_BARS = 8;
+  function buildBlindsMask(openFrac) {
+    // Each bar opens from its own center outward, growing to `openFrac`
+    // of that bar's own width -- at openFrac 0 every bar is fully closed
+    // (mask fully transparent, image showing); at 1 every bar's opening
+    // exactly meets its neighbors' (mask fully opaque, video fully
+    // revealed, no seams left behind).
+    const barWidth = 100 / BLIND_BARS;
+    const gap = barWidth * openFrac;
+    const stops = [];
+    for (let i = 0; i < BLIND_BARS; i++) {
+      const barStart = i * barWidth;
+      const center = barStart + barWidth / 2;
+      const openStart = center - gap / 2;
+      const openEnd = center + gap / 2;
+      stops.push(
+        `transparent ${barStart}%`,
+        `transparent ${openStart}%`,
+        `black ${openStart}%`,
+        `black ${openEnd}%`,
+        `transparent ${openEnd}%`,
+        `transparent ${barStart + barWidth}%`
+      );
+    }
+    return `linear-gradient(to right, ${stops.join(", ")})`;
+  }
+  // Split from playBlindsReveal so the FULLY CLOSED mask (openFrac 0) can
+  // be applied synchronously the moment a holder starts mounting a player
+  // -- confirmed live bug otherwise: the raw YouTube iframe is inserted
+  // into the DOM as soon as `new YT.Player()` runs, well before onReady
+  // fires, and a real (if brief) gap sits between those two moments where
+  // the iframe can render on its own -- unmasked, at full opacity, above
+  // the still image -- before playBlindsReveal ever got called from
+  // onReady and set a mask for the first time. Reported as "an unknown
+  // youtube infiltration" flickering in before the blinds even start.
+  // Pre-closing the mask before the iframe exists at all means there's
+  // never a frame where it can render unmasked, no matter how that gap
+  // behaves on a given connection.
+  function closeBlindsMask(targetEl) {
+    const mask = buildBlindsMask(0);
+    targetEl.style.mask = mask;
+    targetEl.style.webkitMask = mask;
+  }
+  function playBlindsReveal(targetEl, durationMs) {
+    const t0 = performance.now();
+    function tick(now) {
+      const p = Math.min(1, (now - t0) / durationMs);
+      const eased = 1 - Math.pow(1 - p, 3); // ease-out cubic, same feel as the burn reveal
+      const mask = buildBlindsMask(eased);
+      targetEl.style.mask = mask;
+      targetEl.style.webkitMask = mask;
+      if (p < 1) {
+        requestAnimationFrame(tick);
+      } else {
+        // Fully revealed -- drop the mask entirely rather than leaving it
+        // parked at "wide open," so the video ends up in exactly the same
+        // DOM/style state as if it had never been masked at all.
+        targetEl.style.mask = "";
+        targetEl.style.webkitMask = "";
+      }
+    }
+    requestAnimationFrame(tick);
+  }
+
   // ---- cap how many players stay mounted at once ----
   // Every mounted player is a real YouTube iframe -- a full embedded page,
   // not a cheap DOM node -- and nothing was ever destroying old ones as
@@ -474,6 +612,9 @@
   async function mountCustomPlayer(holder) {
     if (holder.dataset.customMounted) return;
     holder.dataset.customMounted = "1";
+    // Closed before anything else -- see closeBlindsMask's own comment
+    // for why this can't wait until onReady/playBlindsReveal.
+    closeBlindsMask(holder);
     const { ytId, ytStart } = holder.dataset;
     const YT = await loadYoutubeApi();
     // A card can scroll out and get evicted while the API script itself
@@ -502,6 +643,7 @@
         rel: 0,
         modestbranding: 1,
         playsinline: 1,
+        disablekb: 1,
         start: ytStart ? Number(ytStart) : undefined,
       },
       events: {
@@ -514,6 +656,7 @@
           if (soundEnabled) e.target.unMute();
           else e.target.mute();
           e.target.playVideo();
+          playBlindsReveal(holder, 1600);
         },
         onStateChange: (e) => {
           updatePlayPauseIcon(controls, e.data);
@@ -804,9 +947,14 @@
   // distance" — that requires crossing the halfway point (~50% of a
   // viewport-tall card) before it flips, which felt like it took several
   // wheel ticks to turn a page. This is a flat, card-height-independent
-  // threshold. Was 70 (roughly 2 wheel ticks on real hardware), halved to
-  // roughly 1 tick by explicit request.
-  const SNAP_COMMIT_PX = 35;
+  // threshold. Started at 70 (~2 ticks), halved to 35, then 17, then 10
+  // by request -- each still read as 2 ticks on real hardware, so halved
+  // again. The actual px-per-tick a real wheel/trackpad sends varies a
+  // lot by device/OS/browser, so this number is really "whatever value
+  // happens to clear one real tick's worth of delta on this specific
+  // setup," not a universal constant -- expect it may need further
+  // tuning.
+  const SNAP_COMMIT_PX = 5;
 
   let snapTimer = null;
   let gestureStartY = 0;

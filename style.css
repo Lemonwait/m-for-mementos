@@ -411,6 +411,10 @@ body{
   overflow: hidden;
   pointer-events: auto;
 }
+/* A suppress-and-reveal cover (.yt-suppress-feedback, hiding the whole
+   frame to mask YouTube's native play/pause icon flash) used to live
+   here -- removed per explicit request, its own fade in/out read as two
+   flickers of its own. See git history if it's worth revisiting. */
 .yt-frame iframe{
   /* Plain full-fill, filling the whole frame. */
   position: absolute;
