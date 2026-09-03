@@ -694,12 +694,26 @@
   // doesn't change the reveal's timing or sequencing at all.
   const BLINDS_WRITE_INTERVAL = 40;
   function playBlindsReveal(targetEl, durationMs, isReadyFn) {
+    // Same real, confirmed race as mountCustomPlayer's own _mountToken
+    // (see its comment) -- dataset.customMounted alone only says "SOME
+    // mount is active for this holder," not "the mount THIS reveal
+    // belongs to still is." Fast scrolling can unmount and remount the
+    // same holder before this reveal's rAF loop ever notices the gap:
+    // dataset.customMounted reads truthy again almost immediately (from
+    // the NEW mount), so the old guard let this stale reveal keep
+    // running right alongside the new mount's own fresh reveal -- two
+    // loops writing the same holder.style.mask in the same frames,
+    // confirmed live as cards visibly getting stuck mid-blinds. Capturing
+    // the token at start and re-checking it catches that: a newer mount
+    // always bumps it, so a superseded reveal reliably notices and bails
+    // even when the dataset flag alone would say "still mounted."
+    const myToken = targetEl._mountToken;
     const t0 = performance.now();
     let pausedSince = null;
     let totalPaused = 0;
     let lastWrite = 0;
     function tick(now) {
-      if (!targetEl.dataset.customMounted) return;
+      if (!targetEl.dataset.customMounted || targetEl._mountToken !== myToken) return;
       if (pausedSince !== null) {
         if (!isReadyFn()) {
           requestAnimationFrame(tick);
@@ -783,21 +797,31 @@
       // queue -- shouldn't normally happen (scrolling to a new card
       // pauses whatever was playing before it), but never yank the video
       // literally in front of the visitor out from under them. Also skip
-      // any other activated entry (playVideo() already called, even if
-      // the PLAYING state change hasn't landed yet), AND anything already
-      // flagged _wantsActivate -- real, confirmed bug at MAX_MOUNTED_VIDEOS
-      // 0 without this: mountCustomPlayer calls enforceMountCap() BEFORE
-      // requestActivate() (entry.activated isn't true yet at that exact
-      // point, even for a card mounting specifically TO be shown
-      // immediately), so a plain !e.activated check let this evict the
-      // entry a caller was about to activate on the very next line,
-      // destroying its player out from under it before it ever got a
-      // chance to play. _wantsActivate is set synchronously, before that
-      // race window opens, so checking it here closes it. Only entries
-      // that are still just preloading in the background, never shown
-      // and never asked to be, are fair game for this cap.
+      // the NEWEST entry -- enforceMountCap() runs right after that one
+      // is pushed, BEFORE its own requestActivate() call (its
+      // entry.activated isn't true yet at that exact point, even for a
+      // card mounting specifically to be shown immediately), so without
+      // this a plain !e.activated check let this evict the entry a
+      // caller was about to activate on the very next line, destroying
+      // its player before it ever got to play.
+      //
+      // This used to check a persistent _wantsActivate flag instead of
+      // "is this the newest" -- a real, confirmed, MUCH worse bug: that
+      // flag is set once and never cleared, so it wasn't protecting "the
+      // entry about to activate," it was permanently exempting ANY
+      // holder that had ever once wanted to activate, forever. Fast
+      // scrolling fires many cards' 300ms-delayed activation in quick
+      // succession, each permanently immune the instant it started
+      // mounting -- confirmed live as literally all 126 videos mounted
+      // simultaneously, real iframes and all, after one fast scroll
+      // session (also the actual cause of the reported "stuck mid-
+      // blinds": dozens of reveals running at once, competing for the
+      // same holders). "Newest" is recomputed fresh on every call
+      // instead, so it only ever protects the one entry actually at risk
+      // right now, never lingering once it's no longer that.
+      const newest = mountedQueue[mountedQueue.length - 1];
       const target = mountedQueue.find(
-        (e) => e !== currentlyPlaying && !e.activated && !e.holder._wantsActivate
+        (e) => e !== currentlyPlaying && e !== newest && !e.activated
       );
       if (!target) break;
       unmountVideoPlayer(target);
