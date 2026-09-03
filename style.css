@@ -737,6 +737,17 @@ body.shadows-hidden .yt-custom-controls{
   background:
     linear-gradient(to top, rgba(5,7,10,0.96) 0%, rgba(5,7,10,0.55) 38%, rgba(5,7,10,0.15) 62%, rgba(5,7,10,0.55) 100%),
     linear-gradient(to right, rgba(5,7,10,0.55) 0%, rgba(5,7,10,0) 45%);
+  transition: opacity 0.3s ease;
+}
+/* A real, confirmed THIRD dark gradient the shadows-hidden toggle
+   missed entirely -- this general "keep text readable over busy art"
+   vignette lives on .event-media itself (not the top bar or a video's
+   own control bar, the only two the toggle originally covered), and
+   both it and .yt-frame sit at z-index:auto, so plain DOM/generation
+   order put this ::after above the video -- confirmed live as the
+   still-dark bottom/left edge the toggle wasn't touching. */
+body.shadows-hidden .event-media::after{
+  opacity: 0;
 }
 
 /* Text pulled out of normal scroll flow the same way the art was: pinned
