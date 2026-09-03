@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Oswald:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=17">
+<link rel="stylesheet" href="style.css?v=20">
 </head>
 <body>
 
@@ -20,10 +20,18 @@
     <span class="subwordmark">明日方舟 · ARKNIGHTS</span>
   </div>
   <div class="topbar-right">
-    <button id="chrome-toggle" type="button" aria-label="Hide site UI" aria-pressed="false">
-      <svg class="icon-eye" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 5c-5 0-9.27 3.11-11 7 1.73 3.89 6 7 11 7s9.27-3.11 11-7c-1.73-3.89-6-7-11-7zm0 11.5A4.5 4.5 0 1 1 12 7.5a4.5 4.5 0 0 1 0 9zm0-7.2A2.7 2.7 0 1 0 12 14.8a2.7 2.7 0 0 0 0-5.5z"/></svg>
-      <svg class="icon-eye-off icon-hidden" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M3.5 2.5 21 20l-1.4 1.4-3.2-3.2c-1.35.53-2.83.8-4.4.8-5 0-9.27-3.11-11-7 .78-1.76 2-3.26 3.5-4.4L2.1 3.9zm7 7L14 13c.03-.16.05-.33.05-.5A2.5 2.5 0 0 0 11.55 10c-.17 0-.34.02-.5.05zM12 5c5 0 9.27 3.11 11 7-.6 1.36-1.5 2.56-2.6 3.55l-1.43-1.43A9.05 9.05 0 0 0 21 12c-1.5-3.09-5-5.5-9-5.5-.98 0-1.92.14-2.8.4L7.7 5.4C9 5.14 10.47 5 12 5zM4.6 8.45A9.05 9.05 0 0 0 3 12c1.5 3.09 5 5.5 9 5.5.6 0 1.18-.05 1.74-.15L11.9 14.5a2.5 2.5 0 0 1-2.9-2.9z"/></svg>
-    </button>
+    <div class="chrome-toggle-wrap">
+      <button id="chrome-toggle" type="button" aria-label="Hide site UI" aria-pressed="false">
+        <svg class="icon-eye" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 5c-5 0-9.27 3.11-11 7 1.73 3.89 6 7 11 7s9.27-3.11 11-7c-1.73-3.89-6-7-11-7zm0 11.5A4.5 4.5 0 1 1 12 7.5a4.5 4.5 0 0 1 0 9zm0-7.2A2.7 2.7 0 1 0 12 14.8a2.7 2.7 0 0 0 0-5.5z"/></svg>
+        <svg class="icon-eye-off icon-hidden" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M3.5 2.5 21 20l-1.4 1.4-3.2-3.2c-1.35.53-2.83.8-4.4.8-5 0-9.27-3.11-11-7 .78-1.76 2-3.26 3.5-4.4L2.1 3.9zm7 7L14 13c.03-.16.05-.33.05-.5A2.5 2.5 0 0 0 11.55 10c-.17 0-.34.02-.5.05zM12 5c5 0 9.27 3.11 11 7-.6 1.36-1.5 2.56-2.6 3.55l-1.43-1.43A9.05 9.05 0 0 0 21 12c-1.5-3.09-5-5.5-9-5.5-.98 0-1.92.14-2.8.4L7.7 5.4C9 5.14 10.47 5 12 5zM4.6 8.45A9.05 9.05 0 0 0 3 12c1.5 3.09 5 5.5 9 5.5.6 0 1.18-.05 1.74-.15L11.9 14.5a2.5 2.5 0 0 1-2.9-2.9z"/></svg>
+      </button>
+      <div class="chrome-toggle-menu">
+        <div class="chrome-toggle-panel">
+          <button class="chrome-mode-btn" type="button" data-mode="idle" aria-label="Auto-hide after mouse rests 1 second">1s</button>
+          <button class="chrome-mode-btn" type="button" data-mode="always" aria-label="Always hide">&#8734;</button>
+        </div>
+      </div>
+    </div>
     <button id="shadows-toggle" type="button" aria-label="Hide dark gradient overlays" aria-pressed="false">
       <svg class="icon-shade" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><rect x="3" y="14" width="18" height="7" rx="2"/></svg>
       <svg class="icon-shade-off icon-hidden" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><rect x="3" y="14" width="18" height="7" rx="2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M2 3l20 20" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
@@ -68,7 +76,7 @@
   </section>
 </main>
 
-<script src="data.js?v=31"></script>
-<script src="app.js?v=31"></script>
+<script src="data.js?v=34"></script>
+<script src="app.js?v=34"></script>
 </body>
 </html>

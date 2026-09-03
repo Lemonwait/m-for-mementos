@@ -233,25 +233,116 @@
   }
 
   // ---- site-wide "hide UI" toggle ----
-  // Hides the header (wordmark/counter), the year rail, and the active
-  // card's own text panel -- everything overlaid ON TOP of the
-  // image/video that isn't the video's own controls -- for a clean,
-  // unobstructed view. This button and the sound toggle deliberately
-  // stay OUT of the hidden set (they're the only way back), which is why
-  // this toggles a class on <body> rather than hiding .topbar-right
-  // wholesale.
+  // Hides the header (wordmark/counter), the year rail, the year
+  // watermark, and the active card's own text panel -- everything
+  // overlaid ON TOP of the image/video that isn't the video's own
+  // controls -- for a clean, unobstructed view. This button and the
+  // sound toggle deliberately stay OUT of the hidden set (they're the
+  // only way back), which is why this toggles a class on <body> rather
+  // than hiding .topbar-right wholesale.
+  //
+  // Three ways to drive it, all converging on the same setChromeHidden:
+  //   - a plain click on the eye button itself: instant manual toggle,
+  //     exactly as before. Also the universal escape hatch -- it clears
+  //     whichever of the two modes below is active, so it always gets
+  //     you back to a known, un-timed, visible state regardless of what
+  //     was going on.
+  //   - "1s" (the hover-revealed menu): idle-hide mode -- UI AND the
+  //     mouse cursor both hide once the mouse rests for 1s, and both
+  //     come back the instant it moves again. Mirrors the same
+  //     auto-hide-on-idle convention fullscreen video players use.
+  //   - "∞": always-hide mode -- hides immediately and just stays that
+  //     way (no timer, cursor untouched) until the eye button itself is
+  //     clicked.
   const chromeToggleBtn = document.getElementById("chrome-toggle");
   const chromeIconEye = chromeToggleBtn.querySelector(".icon-eye");
   const chromeIconEyeOff = chromeToggleBtn.querySelector(".icon-eye-off");
-  chromeToggleBtn.addEventListener("click", () => {
-    const hidden = document.body.classList.toggle("chrome-hidden");
-    chromeToggleBtn.setAttribute("aria-pressed", String(hidden));
-    chromeToggleBtn.setAttribute("aria-label", hidden ? "Show site UI" : "Hide site UI");
+  const chromeModeBtns = document.querySelectorAll(".chrome-mode-btn");
+
+  let chromeMode = "manual"; // "manual" | "idle" | "always"
+  // The eye button's OWN icon/pressed state is deliberately a different
+  // question from "is the UI hidden at this exact instant" -- idle mode
+  // starts out fully visible (nothing hides until the mouse actually
+  // rests), but it's already ARMED the moment it's selected, and by
+  // request that needs to read as "on" immediately, not only once the
+  // 1s timer actually fires. Hidden-right-now OR a mode is armed, either
+  // one lights up the eye.
+  function updateChromeToggleVisual() {
+    const on = chromeMode !== "manual" || document.body.classList.contains("chrome-hidden");
+    chromeToggleBtn.setAttribute("aria-pressed", String(on));
+    chromeToggleBtn.setAttribute("aria-label", on ? "Show site UI" : "Hide site UI");
     // classList, not the `hidden` property -- see updatePlayPauseIcon's
     // own comment for why: SVGSVGElement doesn't reflect that property to
     // the real attribute, a real bug already hit once this session.
-    chromeIconEye.classList.toggle("icon-hidden", hidden);
-    chromeIconEyeOff.classList.toggle("icon-hidden", !hidden);
+    chromeIconEye.classList.toggle("icon-hidden", on);
+    chromeIconEyeOff.classList.toggle("icon-hidden", !on);
+  }
+  function setChromeHidden(hidden) {
+    document.body.classList.toggle("chrome-hidden", hidden);
+    updateChromeToggleVisual();
+  }
+
+  let idleHideTimer = null;
+  function armIdleHideTimer() {
+    clearTimeout(idleHideTimer);
+    idleHideTimer = setTimeout(() => {
+      setChromeHidden(true);
+      document.body.classList.add("cursor-hidden");
+    }, 1000);
+  }
+  function setChromeMode(mode) {
+    chromeMode = mode;
+    clearTimeout(idleHideTimer);
+    document.body.classList.remove("cursor-hidden");
+    chromeModeBtns.forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === mode)));
+    if (mode === "idle") {
+      setChromeHidden(false); // starts visible; the timer hides it once the mouse actually rests
+      armIdleHideTimer();
+    } else if (mode === "always") {
+      setChromeHidden(true);
+    } else {
+      updateChromeToggleVisual(); // manual mode has no hide/show side effect of its own
+    }
+  }
+
+  chromeToggleBtn.addEventListener("click", () => {
+    // The universal escape hatch -- always drops back to plain manual
+    // toggling, regardless of which mode (if any) was active.
+    setChromeMode("manual");
+    setChromeHidden(!document.body.classList.contains("chrome-hidden"));
+    chromeToggleBtn.blur(); // see the mode buttons' own comment for why
+  });
+  chromeModeBtns.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (chromeMode === btn.dataset.mode) {
+        // Re-clicking the already-active mode deselects it -- by
+        // request, same "back to a known, visible state" the eye
+        // button's own escape-hatch click already does.
+        setChromeMode("manual");
+        setChromeHidden(false);
+      } else {
+        setChromeMode(btn.dataset.mode);
+      }
+      // A real, confirmed bug otherwise: a mouse click leaves the
+      // clicked button focused (an ordinary browser default), and
+      // :focus-within (added below purely so a keyboard user tabbing to
+      // a mode button can still see the menu before activating it) kept
+      // the flyout open from that lingering focus alone, independent of
+      // :hover -- it never closed even once the mouse had clearly moved
+      // on elsewhere. Blurring right after a MOUSE click clears that
+      // specific case while leaving genuine keyboard-tab focus (which
+      // never runs through a click at all) untouched.
+      btn.blur();
+    });
+  });
+
+  // Site-wide, not scoped to the button/menu -- idle mode cares about the
+  // mouse resting ANYWHERE on the page, not just over this one control.
+  window.addEventListener("mousemove", () => {
+    if (chromeMode !== "idle") return;
+    document.body.classList.remove("cursor-hidden");
+    setChromeHidden(false);
+    armIdleHideTimer();
   });
 
   // ---- site-wide "hide shadows" toggle ----
