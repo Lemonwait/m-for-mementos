@@ -12,6 +12,15 @@
 
 *{ box-sizing: border-box; }
 
+/* General-purpose "hide this element" utility, toggled via classList
+   rather than the `hidden` PROPERTY -- real, confirmed bug otherwise:
+   SVGSVGElement doesn't reflect that property to the actual hidden
+   attribute the way ordinary HTML elements do (confirmed live:
+   svg.hidden = true left hasAttribute('hidden') false), so anything
+   toggling `.hidden` on an svg silently never actually hid at all. Used
+   for every dynamic icon-swap on the site (play/pause, the hide-UI eye). */
+.icon-hidden{ display: none; }
+
 html{
   /* NOT scroll-behavior:smooth -- every scroll our own JS ever triggers
      already requests { behavior: "smooth" } explicitly on the call itself
@@ -73,6 +82,24 @@ body{
   padding: 18px 28px 14px;
   background: linear-gradient(to bottom, rgba(5,7,10,0.85) 0%, rgba(5,7,10,0) 100%);
   pointer-events: none;
+  transition: background 0.3s ease;
+}
+/* shadows-hidden strips just this backdrop -- separate from
+   chrome-hidden (its own toggle), which hides the CONTENT sitting on
+   top of it instead. Independent toggles, independent concerns: either
+   can be on/off in any combination. */
+body.shadows-hidden #top-bar{
+  background: none;
+}
+#top-bar .wordmark,
+#top-bar .subwordmark,
+#counter{
+  transition: opacity 0.3s ease;
+}
+body.chrome-hidden #top-bar .wordmark,
+body.chrome-hidden #top-bar .subwordmark,
+body.chrome-hidden #counter{
+  opacity: 0;
 }
 #top-bar .wordmark{
   font-family: var(--font-display);
@@ -104,8 +131,13 @@ body{
   gap: 12px;
 }
 /* #top-bar itself is pointer-events:none (a gradient overlay strip, not
-   meant to block scroll/wheel underneath it) -- this is the one child
-   that needs to opt back into being clickable. */
+   meant to block scroll/wheel underneath it) -- these are the children
+   that need to opt back into being clickable. Deliberately NOT hidden by
+   body.chrome-hidden/shadows-hidden below (see those rules' own
+   comments) -- they're the only way back once the rest of the UI is
+   hidden. */
+#chrome-toggle,
+#shadows-toggle,
 #sound-toggle{
   pointer-events: auto;
   display: flex;
@@ -120,9 +152,18 @@ body{
   cursor: pointer;
   transition: color 0.2s ease, border-color 0.2s ease;
 }
+#chrome-toggle:hover,
+#shadows-toggle:hover,
 #sound-toggle:hover{
   border-color: var(--accent);
   color: var(--ink);
+}
+#chrome-toggle svg,
+#shadows-toggle svg{ fill: currentColor; }
+#chrome-toggle[aria-pressed="true"],
+#shadows-toggle[aria-pressed="true"]{
+  color: var(--accent);
+  border-color: var(--accent);
 }
 #sound-toggle .bar{
   fill: currentColor;
@@ -161,6 +202,11 @@ body{
   flex-direction: column;
   align-items: center;
   gap: 14px;
+  transition: opacity 0.3s ease;
+}
+body.chrome-hidden #year-rail{
+  opacity: 0;
+  pointer-events: none;
 }
 .year-dot{
   display: flex;
@@ -322,7 +368,10 @@ body{
   opacity: 1;
   transition: opacity 0.5s ease;
 }
-#year-watermark.hidden{ opacity: 0; }
+#year-watermark.hidden,
+body.chrome-hidden #year-watermark{
+  opacity: 0;
+}
 .year-digit{
   display: inline-block;
   height: 1em;
@@ -500,13 +549,35 @@ body{
   pointer-events: auto;
   background: linear-gradient(to top, rgba(5,7,10,0.85) 0%, rgba(5,7,10,0) 100%);
   opacity: 0;
-  transition: opacity 0.3s ease;
+  transition: opacity 0.3s ease, background 0.3s ease;
+}
+/* Same site-wide shadows-hidden toggle that strips #top-bar's own
+   backdrop (see its own comment) -- this is the OTHER dark gradient on
+   the site, so it's the other half of the same button. The controls
+   themselves (buttons/track) keep their own visibility/styling either
+   way -- this only removes the backdrop behind them. */
+body.shadows-hidden .yt-custom-controls{
+  background: none;
 }
 .yt-frame:hover .yt-custom-controls,
 .yt-custom-controls.active{
   opacity: 1;
 }
-.yt-playpause{
+/* Shades auto-hide mode (its own toggle button, .yt-autohide-toggle):
+   the bar's plain hover-reveal above still exists for every OTHER
+   video, unchanged -- this only overrides it for a frame that's opted
+   in, and only while actually resting (see the JS-driven .active
+   class in app.js's own mousemove/timer logic for what puts it back).
+   Equal specificity to the hover rule above, later in source, so it
+   wins for a hover+shades-autohide frame; .active is one class more
+   specific again, so IT always wins over this, regardless of order. */
+.yt-frame.shades-autohide .yt-custom-controls{
+  opacity: 0;
+}
+.yt-frame.shades-autohide .yt-custom-controls.active{
+  opacity: 1;
+}
+.yt-icon-btn{
   flex: none;
   width: 28px;
   height: 28px;
@@ -518,21 +589,18 @@ body{
   background: rgba(0,176,255,0.1);
   color: var(--accent);
   cursor: pointer;
-  transition: background 0.2s ease, border-color 0.2s ease;
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
 }
-.yt-playpause:hover{
+.yt-icon-btn:hover{
   background: rgba(0,176,255,0.22);
   border-color: var(--accent);
 }
-.yt-playpause svg{ width: 14px; height: 14px; fill: currentColor; }
-/* Real, confirmed bug otherwise: updatePlayPauseIcon (app.js) used to
-   toggle the `hidden` PROPERTY, but SVGSVGElement doesn't reflect that
-   to the actual hidden attribute the way ordinary HTML elements do
-   (confirmed live: svg.hidden = true left hasAttribute('hidden') false)
-   -- so neither icon ever actually hid, and both rendered stacked on top
-   of each other instead of swapping. app.js now toggles this class
-   directly instead of relying on that broken reflection. */
-.yt-playpause svg.icon-hidden{ display: none; }
+.yt-icon-btn[aria-pressed="true"]{
+  background: var(--accent);
+  color: var(--panel);
+}
+.yt-icon-btn svg{ width: 14px; height: 14px; fill: currentColor; }
+.yt-cc-toggle{ font: 700 11px/1 var(--font-body); letter-spacing: 0.02em; }
 .yt-seek-track{
   position: relative;
   flex: 1;
@@ -606,6 +674,15 @@ body{
      the outgoing text needs to disappear instantly, not fade out, or a
      fast scroll leaves several text blocks simultaneously mid-fade
      (which is what corruption like "128/131 overlapping 130/131" was). */
+}
+/* The hide-UI toggle deliberately gets NO transition here either, same
+   reasoning -- adding one to .event-body itself would carry into the
+   active/leaving rules below too (transition is inherited by whichever
+   of them actually applies), reintroducing that exact bug for ordinary
+   scrolling. An instant snap for this toggle is a fine tradeoff for
+   keeping card-to-card scrolling provably safe. */
+body.chrome-hidden .event.active .event-body{
+  opacity: 0;
 }
 .event.active .event-body{
   opacity: 1;

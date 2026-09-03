@@ -232,6 +232,45 @@
     return obs;
   }
 
+  // ---- site-wide "hide UI" toggle ----
+  // Hides the header (wordmark/counter), the year rail, and the active
+  // card's own text panel -- everything overlaid ON TOP of the
+  // image/video that isn't the video's own controls -- for a clean,
+  // unobstructed view. This button and the sound toggle deliberately
+  // stay OUT of the hidden set (they're the only way back), which is why
+  // this toggles a class on <body> rather than hiding .topbar-right
+  // wholesale.
+  const chromeToggleBtn = document.getElementById("chrome-toggle");
+  const chromeIconEye = chromeToggleBtn.querySelector(".icon-eye");
+  const chromeIconEyeOff = chromeToggleBtn.querySelector(".icon-eye-off");
+  chromeToggleBtn.addEventListener("click", () => {
+    const hidden = document.body.classList.toggle("chrome-hidden");
+    chromeToggleBtn.setAttribute("aria-pressed", String(hidden));
+    chromeToggleBtn.setAttribute("aria-label", hidden ? "Show site UI" : "Hide site UI");
+    // classList, not the `hidden` property -- see updatePlayPauseIcon's
+    // own comment for why: SVGSVGElement doesn't reflect that property to
+    // the real attribute, a real bug already hit once this session.
+    chromeIconEye.classList.toggle("icon-hidden", hidden);
+    chromeIconEyeOff.classList.toggle("icon-hidden", !hidden);
+  });
+
+  // ---- site-wide "hide shadows" toggle ----
+  // A SEPARATE concern from chrome-hidden above: this only strips the
+  // dark gradient BACKDROPS (the top bar's own background, and every
+  // video's own control-bar background) -- not the text/controls sitting
+  // on top of them, which keep their own visibility logic untouched
+  // either way.
+  const shadowsToggleBtn = document.getElementById("shadows-toggle");
+  const shadeIconOn = shadowsToggleBtn.querySelector(".icon-shade");
+  const shadeIconOff = shadowsToggleBtn.querySelector(".icon-shade-off");
+  shadowsToggleBtn.addEventListener("click", () => {
+    const hidden = document.body.classList.toggle("shadows-hidden");
+    shadowsToggleBtn.setAttribute("aria-pressed", String(hidden));
+    shadowsToggleBtn.setAttribute("aria-label", hidden ? "Show dark gradient overlays" : "Hide dark gradient overlays");
+    shadeIconOn.classList.toggle("icon-hidden", hidden);
+    shadeIconOff.classList.toggle("icon-hidden", !hidden);
+  });
+
   // ---- site-wide sound toggle ----
   // A real click anywhere on the page grants the browser's "sticky user
   // activation" for the rest of the page's lifetime -- confirmed directly
@@ -363,7 +402,7 @@
     const bar = document.createElement("div");
     bar.className = "yt-custom-controls";
     bar.innerHTML = `
-      <button class="yt-playpause" type="button" aria-label="Play or pause">
+      <button class="yt-icon-btn yt-playpause" type="button" aria-label="Play or pause">
         <svg class="icon-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
         <svg class="icon-pause icon-hidden" viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>
       </button>
@@ -371,6 +410,10 @@
         <div class="yt-seek-fill"></div>
         <div class="yt-seek-handle"></div>
       </div>
+      <button class="yt-icon-btn yt-cc-toggle" type="button" aria-label="Toggle captions" aria-pressed="false">CC</button>
+      <button class="yt-icon-btn yt-autohide-toggle" type="button" aria-label="Auto-hide controls while resting" aria-pressed="false">
+        <svg viewBox="0 0 24 24"><path d="M12 5c-5 0-9.27 3.11-11 7 1.73 3.89 6 7 11 7s9.27-3.11 11-7c-1.73-3.89-6-7-11-7zm0 11.5A4.5 4.5 0 1 1 12 7.5a4.5 4.5 0 0 1 0 9zm0-7.2A2.7 2.7 0 1 0 12 14.8a2.7 2.7 0 0 0 0-5.5z"/></svg>
+      </button>
     `;
     holder.appendChild(bar);
     return {
@@ -381,6 +424,8 @@
       track: bar.querySelector(".yt-seek-track"),
       fill: bar.querySelector(".yt-seek-fill"),
       handle: bar.querySelector(".yt-seek-handle"),
+      ccBtn: bar.querySelector(".yt-cc-toggle"),
+      autoHideBtn: bar.querySelector(".yt-autohide-toggle"),
     };
   }
 
@@ -874,6 +919,56 @@
     }
     controls.playPauseBtn.addEventListener("click", togglePlayPause);
     clickCatcher.addEventListener("click", togglePlayPause);
+
+    // ---- shades auto-hide: fades the whole control bar back out after
+    // the mouse rests on the frame for 2s, even while still hovering --
+    // opt-in via its own button, since the DEFAULT (this off) is the
+    // plain hover-reveal every other control already uses. Also driven
+    // by captions being on (see the CC toggle below): the bar re-hides
+    // itself the same way once captions are showing, so it doesn't sit
+    // on top of the caption text -- reusing this same timer/class rather
+    // than a separate mechanism, so hovering to reach the CC button
+    // again (to turn captions back off) still works exactly the same
+    // way.
+    let shadesAutoHide = false;
+    let captionsOn = false;
+    let shadesHideTimer = null;
+    function showShadesTemporarily() {
+      controls.bar.classList.add("active");
+      clearTimeout(shadesHideTimer);
+      shadesHideTimer = setTimeout(() => controls.bar.classList.remove("active"), 2000);
+    }
+    holder.addEventListener("mousemove", () => {
+      if (shadesAutoHide || captionsOn) showShadesTemporarily();
+    });
+    controls.autoHideBtn.addEventListener("click", () => {
+      shadesAutoHide = !shadesAutoHide;
+      controls.autoHideBtn.setAttribute("aria-pressed", String(shadesAutoHide));
+      holder.classList.toggle("shades-autohide", shadesAutoHide || captionsOn);
+      if (shadesAutoHide) showShadesTemporarily();
+      else if (!captionsOn) {
+        clearTimeout(shadesHideTimer);
+        controls.bar.classList.remove("active");
+      }
+    });
+
+    // ---- captions ----
+    // loadModule/setOption/unloadModule are the YouTube IFrame API's own
+    // (lightly documented, but real) module-based captions controls --
+    // cc_load_policy as a playerVar only sets the INITIAL default, this
+    // is what actually toggles them live from a click.
+    controls.ccBtn.addEventListener("click", () => {
+      captionsOn = !captionsOn;
+      controls.ccBtn.setAttribute("aria-pressed", String(captionsOn));
+      if (captionsOn) {
+        player.loadModule("captions");
+        player.setOption("captions", "track", {});
+        showShadesTemporarily();
+      } else {
+        player.unloadModule("captions");
+      }
+      holder.classList.toggle("shades-autohide", shadesAutoHide || captionsOn);
+    });
 
     const player = new YT.Player(playerEl, {
       videoId: ytId,
