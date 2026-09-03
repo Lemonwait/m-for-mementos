@@ -182,8 +182,22 @@
   function toggleEntry(entry) {
     if (!entry) return;
     const state = entry.player.getPlayerState();
-    if (state === 1) entry.player.pauseVideo();
-    else entry.player.playVideo();
+    if (state === 1) {
+      entry.player.pauseVideo();
+      updatePlayPauseIcon(entry.controls, 2); // optimistic -- see its own comment below
+    } else {
+      entry.player.playVideo();
+      // Resuming can briefly pass through BUFFERING before the real
+      // PLAYING state change event actually fires -- confirmed live as a
+      // small but noticeable delay before the icon updated, since it was
+      // only ever driven by that async confirmation. Pausing never has
+      // an equivalent stall (nothing to buffer), so only this direction
+      // read as laggy. Flipping the icon immediately, optimistically,
+      // fixes both: the later real onStateChange (PLAYING) just confirms
+      // what's already showing, a no-op rather than the thing doing the
+      // work.
+      updatePlayPauseIcon(entry.controls, 1);
+    }
   }
   // Watches the .event SECTION (normal document flow, real scroll-based
   // geometry) rather than any position:fixed video layer itself, same
@@ -351,7 +365,7 @@
     bar.innerHTML = `
       <button class="yt-playpause" type="button" aria-label="Play or pause">
         <svg class="icon-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-        <svg class="icon-pause" viewBox="0 0 24 24" hidden><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>
+        <svg class="icon-pause icon-hidden" viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>
       </button>
       <div class="yt-seek-track">
         <div class="yt-seek-fill"></div>
@@ -435,8 +449,17 @@
 
   function updatePlayPauseIcon(controls, playerState) {
     const playing = playerState === 1; // YT.PlayerState.PLAYING
-    controls.iconPlay.hidden = playing;
-    controls.iconPause.hidden = !playing;
+    // classList, not the `hidden` property -- a real, confirmed bug
+    // otherwise: SVGSVGElement's `.hidden` IDL property doesn't reflect
+    // to the actual hidden CONTENT ATTRIBUTE the way it does on ordinary
+    // HTML elements (confirmed live: svg.hidden = true left
+    // hasAttribute('hidden') false), so neither icon ever actually
+    // toggled -- both just sat at whatever display their own CSS gave
+    // them by default, rendering stacked on top of each other instead of
+    // swapping. classList works identically on every element type,
+    // SVG included.
+    controls.iconPlay.classList.toggle("icon-hidden", playing);
+    controls.iconPause.classList.toggle("icon-hidden", !playing);
   }
 
   // ---- "burn" reveal: static image -> video, via an organic noise mask ----
@@ -836,8 +859,18 @@
     const controls = buildCustomControls(holder);
     function togglePlayPause() {
       const state = player.getPlayerState();
-      if (state === 1) player.pauseVideo();
-      else player.playVideo();
+      if (state === 1) {
+        player.pauseVideo();
+        updatePlayPauseIcon(controls, 2);
+      } else {
+        // Optimistic, not waiting for the real onStateChange confirmation
+        // -- see toggleEntry's own comment (app.js) for why resuming
+        // specifically (not pausing) had a small but real, confirmed
+        // delay otherwise: a brief BUFFERING pass before the actual
+        // PLAYING event fires.
+        player.playVideo();
+        updatePlayPauseIcon(controls, 1);
+      }
     }
     controls.playPauseBtn.addEventListener("click", togglePlayPause);
     clickCatcher.addEventListener("click", togglePlayPause);
@@ -899,7 +932,17 @@
           }
         },
         onStateChange: (e) => {
-          updatePlayPauseIcon(controls, e.data);
+          // Real, confirmed bug otherwise: only PLAYING(1)/PAUSED(2) mean
+          // anything for this icon -- calling this for EVERY state
+          // change meant a resume's real event sequence (which can pass
+          // through BUFFERING(3) before actually reaching PLAYING) fired
+          // this with state 3 in between, and since only exactly 1 counts
+          // as "playing," that briefly flipped the icon back to paused-
+          // looking, undoing the optimistic update from toggleEntry/
+          // togglePlayPause and UN-fixing the exact delay those exist to
+          // fix -- confirmed live as a visible flicker (block -> none ->
+          // block) rather than a clean, single instant swap.
+          if (e.data === 1 || e.data === 2) updatePlayPauseIcon(controls, e.data);
           if (e.data === 1) { // PLAYING
             setCurrentlyPlaying(entry);
             activeProgressUI = { controls, player, dragState };
@@ -908,7 +951,7 @@
       },
     });
     const entry = {
-      holder, player,
+      holder, player, controls,
       pause: () => player.pauseVideo(),
       ready: false, activated: false, revealStarted: false,
     };

@@ -525,6 +525,14 @@ body{
   border-color: var(--accent);
 }
 .yt-playpause svg{ width: 14px; height: 14px; fill: currentColor; }
+/* Real, confirmed bug otherwise: updatePlayPauseIcon (app.js) used to
+   toggle the `hidden` PROPERTY, but SVGSVGElement doesn't reflect that
+   to the actual hidden attribute the way ordinary HTML elements do
+   (confirmed live: svg.hidden = true left hasAttribute('hidden') false)
+   -- so neither icon ever actually hid, and both rendered stacked on top
+   of each other instead of swapping. app.js now toggles this class
+   directly instead of relying on that broken reflection. */
+.yt-playpause svg.icon-hidden{ display: none; }
 .yt-seek-track{
   position: relative;
   flex: 1;
