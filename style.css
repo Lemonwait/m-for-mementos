@@ -218,6 +218,14 @@ body.chrome-hidden #counter{
 .sound-toggle-wrap:focus-within .sound-toggle-menu{
   opacity: 1;
 }
+/* Explicit safety-net close (see app.js's own comment on where this
+   gets toggled) -- !important so it wins over the hover/focus-within
+   rule above regardless of what the browser thinks :hover/:focus-within
+   currently match. */
+.sound-toggle-menu.force-hide{
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
 .chrome-mode-btn[data-mode="always"]{
   /* The ∞ glyph renders visually smaller than other characters at the
      same font-size in most fonts (a lot of internal padding baked into

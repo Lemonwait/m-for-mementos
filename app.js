@@ -393,8 +393,19 @@
     // call itself means one still-initializing player can't crash every
     // OTHER already-working one in the same forEach pass.
     customPlayers.forEach((player) => {
-      if (on && typeof player.unMute === "function") player.unMute();
-      else if (!on && typeof player.mute === "function") player.mute();
+      if (on) {
+        if (typeof player.unMute === "function") player.unMute();
+        // Re-asserted here, not just trusted to have stuck from whatever
+        // it was last set to -- confirmed live: unMute() alone could
+        // bring a player back audible at a level not matching where the
+        // volume slider actually sits (e.g. dragged to 0, then muted and
+        // re-enabled via this button). volumeLevel itself is declared
+        // further down this same function, safe to reference here since
+        // this function only ever RUNS after that line has executed.
+        if (typeof player.setVolume === "function") player.setVolume(volumeLevel);
+      } else if (typeof player.mute === "function") {
+        player.mute();
+      }
     });
   }
   soundToggleBtn.addEventListener("click", () => setSoundEnabled(!soundEnabled));
@@ -418,10 +429,28 @@
   // can keep nudging it afterward) -- same :focus-within-outlives-:hover
   // gap the chrome-toggle mode buttons had, but blurring on every
   // interaction like those buttons do would kill that keyboard follow-up
-  // here. Blurring specifically on mouseleave instead closes the panel
-  // the moment the cursor actually leaves, without ever cutting off an
-  // in-progress hover/drag/keyboard adjustment while it's still there.
-  document.querySelector(".sound-toggle-wrap").addEventListener("mouseleave", () => volumeSlider.blur());
+  // here. Blurring on mouseleave instead only closes it once the cursor
+  // actually leaves.
+  //
+  // That alone isn't enough, though -- confirmed live: after an actual
+  // click-drag on the slider that's released outside the wrap (as
+  // opposed to a plain hover-and-leave), the blur still happens, but
+  // .sound-toggle-menu's own opacity stays stuck at 1 even though
+  // neither :hover nor :focus-within matches by every measure checked
+  // (matches(':hover'), the live :hover chain, activeElement). Rather
+  // than chase why that one gesture leaves the rendered style stale,
+  // .force-hide is an explicit, unconditional close that doesn't depend
+  // on the browser re-deriving :hover/:focus-within correctly -- added
+  // on mouseleave same as the blur, cleared the moment a real hover or
+  // keyboard focus re-enters so normal use is unaffected.
+  const soundToggleWrap = document.querySelector(".sound-toggle-wrap");
+  const soundToggleMenu = document.querySelector(".sound-toggle-menu");
+  soundToggleWrap.addEventListener("mouseleave", () => {
+    volumeSlider.blur();
+    soundToggleMenu.classList.add("force-hide");
+  });
+  soundToggleWrap.addEventListener("mouseenter", () => soundToggleMenu.classList.remove("force-hide"));
+  soundToggleWrap.addEventListener("focusin", () => soundToggleMenu.classList.remove("force-hide"));
 
   // Pressing Space is the browser's native "scroll down ~one page"
   // shortcut -- with every card sized min-height:100vh, that lands
