@@ -399,6 +399,30 @@
   }
   soundToggleBtn.addEventListener("click", () => setSoundEnabled(!soundEnabled));
 
+  // Volume level (0-100), independent of the mute toggle above -- same
+  // relationship a normal media player keeps between its mute button and
+  // its volume slider (dragging to 0 doesn't flip the mute flag, and
+  // muting doesn't move the slider). Revealed on hover via
+  // .sound-toggle-wrap/.sound-toggle-menu, the same pattern as the
+  // chrome-toggle mode picker (see that CSS block's own comments).
+  const volumeSlider = document.getElementById("volume-slider");
+  let volumeLevel = 100;
+  function setVolumeLevel(v) {
+    volumeLevel = v;
+    customPlayers.forEach((player) => {
+      if (typeof player.setVolume === "function") player.setVolume(v);
+    });
+  }
+  volumeSlider.addEventListener("input", () => setVolumeLevel(Number(volumeSlider.value)));
+  // Dragging/clicking the slider leaves it focused (needed so arrow keys
+  // can keep nudging it afterward) -- same :focus-within-outlives-:hover
+  // gap the chrome-toggle mode buttons had, but blurring on every
+  // interaction like those buttons do would kill that keyboard follow-up
+  // here. Blurring specifically on mouseleave instead closes the panel
+  // the moment the cursor actually leaves, without ever cutting off an
+  // in-progress hover/drag/keyboard adjustment while it's still there.
+  document.querySelector(".sound-toggle-wrap").addEventListener("mouseleave", () => volumeSlider.blur());
+
   // Pressing Space is the browser's native "scroll down ~one page"
   // shortcut -- with every card sized min-height:100vh, that lands
   // roughly on the next card, reading as "space jumps to the next event."
@@ -972,6 +996,7 @@
     entry.player.playVideo();
     if (soundEnabled) entry.player.unMute();
     else entry.player.mute();
+    if (typeof entry.player.setVolume === "function") entry.player.setVolume(volumeLevel);
     // Only now does a scroll-out mean anything to reset -- a preload that
     // never got shown just sits in mountedQueue until the cap reclaims
     // it (see enforceMountCap), same as it always could.

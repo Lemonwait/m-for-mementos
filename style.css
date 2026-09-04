@@ -187,6 +187,37 @@ body.chrome-hidden #counter{
 .chrome-toggle-wrap:focus-within .chrome-toggle-menu{
   opacity: 1;
 }
+/* Hover-revealed volume slider for #sound-toggle -- same padding-bridge
+   structure as .chrome-toggle-wrap above (see its own comments for why
+   the menu starts at top:100% with zero gap, and why pointer-events
+   stays permanently auto instead of toggling with opacity). */
+.sound-toggle-wrap{
+  position: relative;
+  pointer-events: auto;
+}
+.sound-toggle-menu{
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 101;
+  padding-top: 8px;
+  opacity: 0;
+  pointer-events: auto;
+  transition: opacity 0.15s ease;
+}
+.sound-toggle-panel{
+  display: flex;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--accent-dim);
+  border-radius: 4px;
+  background: var(--panel);
+}
+.sound-toggle-wrap:hover .sound-toggle-menu,
+.sound-toggle-wrap:focus-within .sound-toggle-menu{
+  opacity: 1;
+}
 .chrome-mode-btn[data-mode="always"]{
   /* The ∞ glyph renders visually smaller than other characters at the
      same font-size in most fonts (a lot of internal padding baked into
@@ -289,6 +320,46 @@ body.cursor-hidden *{
 @keyframes sound-bounce{
   0%, 100% { transform: scaleY(0.55); }
   50% { transform: scaleY(1); }
+}
+#volume-slider{
+  width: 90px;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--accent-dim);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+#volume-slider::-webkit-slider-thumb{
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+#volume-slider::-webkit-slider-thumb:hover{
+  background: var(--ink);
+}
+#volume-slider::-moz-range-track{
+  height: 4px;
+  background: var(--accent-dim);
+  border-radius: 2px;
+}
+#volume-slider::-moz-range-thumb{
+  width: 12px;
+  height: 12px;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+#volume-slider::-moz-range-thumb:hover{
+  background: var(--ink);
 }
 
 /* ---------- year rail ---------- */
