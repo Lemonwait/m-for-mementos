@@ -101,6 +101,25 @@ body.chrome-hidden #top-bar .subwordmark,
 body.chrome-hidden #counter{
   opacity: 0;
 }
+/* The three escape-hatch buttons themselves (eye/shadows/sound) --
+   deliberately left OUT of the rule above this whole session (they're
+   the only way back once everything else is hidden), but confirmed by
+   request: they should hide too. Revealed on hover over the whole
+   .topbar-right row (not just each button's own tiny hit-box -- see
+   its own pointer-events comment) so there's still a way back in
+   "always" mode, which (unlike "idle") has no separate any-mousemove
+   reveal of its own. */
+body.chrome-hidden #chrome-toggle,
+body.chrome-hidden #shadows-toggle,
+body.chrome-hidden #sound-toggle{
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+body.chrome-hidden .topbar-right:hover #chrome-toggle,
+body.chrome-hidden .topbar-right:hover #shadows-toggle,
+body.chrome-hidden .topbar-right:hover #sound-toggle{
+  opacity: 1;
+}
 #top-bar .wordmark{
   font-family: var(--font-display);
   font-weight: 600;
@@ -129,6 +148,12 @@ body.chrome-hidden #counter{
   display: flex;
   align-items: center;
   gap: 12px;
+  /* #top-bar itself is pointer-events:none (see its own comment) --
+     needed here too so hovering this row (including the now-invisible
+     buttons and the gaps between them, once chrome-hidden below) can
+     register at all, rather than only the pixel-precise hit-box of
+     whichever single button happens to already be visible. */
+  pointer-events: auto;
 }
 /* Hover-revealed mode picker for #chrome-toggle: the button itself keeps
    its own plain instant click-toggle (unchanged), this is purely an

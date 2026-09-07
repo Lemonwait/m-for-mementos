@@ -259,7 +259,14 @@
   const chromeIconEyeOff = chromeToggleBtn.querySelector(".icon-eye-off");
   const chromeModeBtns = document.querySelectorAll(".chrome-mode-btn");
 
-  let chromeMode = "manual"; // "manual" | "idle" | "always"
+  // "manual" | "always" | one of IDLE_DELAYS's own keys below.
+  let chromeMode = "manual";
+  // Every idle-hide duration on offer, in ms -- one .chrome-mode-btn
+  // per key (matched by its data-mode). Adding another duration is just
+  // one more entry here plus one more button in the HTML; nothing else
+  // needs to know how many there are (see the generic membership checks
+  // below instead of a hardcoded === "idle").
+  const IDLE_DELAYS = { idle1: 1000, idle5: 5000, idle10: 10000 };
   // The eye button's OWN icon/pressed state is deliberately a different
   // question from "is the UI hidden at this exact instant" -- idle mode
   // starts out fully visible (nothing hides until the mouse actually
@@ -288,7 +295,7 @@
     idleHideTimer = setTimeout(() => {
       setChromeHidden(true);
       document.body.classList.add("cursor-hidden");
-    }, 1000);
+    }, IDLE_DELAYS[chromeMode]);
   }
   function setChromeMode(mode) {
     chromeMode = mode;
@@ -302,7 +309,7 @@
     clearTimeout(idleHideTimer);
     document.body.classList.remove("cursor-hidden");
     chromeModeBtns.forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === mode)));
-    if (mode === "idle") {
+    if (mode in IDLE_DELAYS) {
       setChromeHidden(false); // starts visible; the timer hides it once the mouse actually rests
       armIdleHideTimer();
     } else if (mode === "always") {
@@ -313,18 +320,20 @@
   }
 
   // Restores whichever mode was last explicitly chosen (persisted just
-  // above, inside setChromeMode) so a reload doesn't forget it. "idle"
+  // above, inside setChromeMode) so a reload doesn't forget it. "idle1"
   // (1s) is the default for a genuinely first-time visitor with nothing
   // saved yet, by request -- everyone else keeps whatever they last
-  // picked, "manual" (off) included.
+  // picked, "manual" (off) included. A stale "idle" from before the 5s/
+  // 10s options existed just falls through to that same default, which
+  // is the exact 1s behavior it used to mean anyway.
   function loadSavedChromeMode() {
     try {
       const saved = localStorage.getItem("chromeMode");
-      if (saved === "idle" || saved === "always" || saved === "manual") return saved;
+      if (saved === "always" || saved === "manual" || saved in IDLE_DELAYS) return saved;
     } catch (e) {
       // Falls through to the same first-time-visitor default below.
     }
-    return "idle";
+    return "idle1";
   }
   setChromeMode(loadSavedChromeMode());
 
@@ -362,7 +371,7 @@
   // Site-wide, not scoped to the button/menu -- idle mode cares about the
   // mouse resting ANYWHERE on the page, not just over this one control.
   window.addEventListener("mousemove", () => {
-    if (chromeMode !== "idle") return;
+    if (!(chromeMode in IDLE_DELAYS)) return;
     document.body.classList.remove("cursor-hidden");
     setChromeHidden(false);
     armIdleHideTimer();
