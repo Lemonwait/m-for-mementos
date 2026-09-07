@@ -377,13 +377,33 @@
   const shadowsToggleBtn = document.getElementById("shadows-toggle");
   const shadeIconOn = shadowsToggleBtn.querySelector(".icon-shade");
   const shadeIconOff = shadowsToggleBtn.querySelector(".icon-shade-off");
-  shadowsToggleBtn.addEventListener("click", () => {
-    const hidden = document.body.classList.toggle("shadows-hidden");
+  function setShadowsHidden(hidden) {
+    document.body.classList.toggle("shadows-hidden", hidden);
     shadowsToggleBtn.setAttribute("aria-pressed", String(hidden));
     shadowsToggleBtn.setAttribute("aria-label", hidden ? "Show dark gradient overlays" : "Hide dark gradient overlays");
     shadeIconOn.classList.toggle("icon-hidden", hidden);
     shadeIconOff.classList.toggle("icon-hidden", !hidden);
+    try {
+      localStorage.setItem("shadowsHidden", String(hidden));
+    } catch (e) {
+      // Storage can throw (disabled, some private-browsing contexts) --
+      // the toggle still works for this visit, it just won't be
+      // remembered next time.
+    }
+  }
+  shadowsToggleBtn.addEventListener("click", () => {
+    setShadowsHidden(!document.body.classList.contains("shadows-hidden"));
   });
+  // Restores whatever was last picked, same reasoning as chromeMode
+  // below -- defaults to visible (false) when nothing's saved yet,
+  // matching the plain HTML default (aria-pressed="false").
+  let savedShadowsHidden = false;
+  try {
+    savedShadowsHidden = localStorage.getItem("shadowsHidden") === "true";
+  } catch (e) {
+    // Falls through to the same not-hidden default.
+  }
+  setShadowsHidden(savedShadowsHidden);
 
   // ---- site-wide sound toggle ----
   // A real click anywhere on the page grants the browser's "sticky user
@@ -443,11 +463,32 @@
   let volumeLevel = 100;
   function setVolumeLevel(v) {
     volumeLevel = v;
+    try {
+      localStorage.setItem("volumeLevel", String(v));
+    } catch (e) {
+      // Storage can throw (disabled, some private-browsing contexts) --
+      // the level still applies for this visit, it just won't be
+      // remembered next time.
+    }
     customPlayers.forEach((player) => {
       if (typeof player.setVolume === "function") player.setVolume(v);
     });
   }
   volumeSlider.addEventListener("input", () => setVolumeLevel(Number(volumeSlider.value)));
+  // Restores whatever level was last set, same reasoning as chromeMode
+  // below -- defaults to 100 (full) when nothing's saved yet, matching
+  // the slider's own HTML default.
+  (function loadSavedVolumeLevel() {
+    let saved = 100;
+    try {
+      const stored = Number(localStorage.getItem("volumeLevel"));
+      if (Number.isFinite(stored) && stored >= 0 && stored <= 100) saved = stored;
+    } catch (e) {
+      // Falls through to the same full-volume default.
+    }
+    volumeSlider.value = String(saved);
+    setVolumeLevel(saved);
+  })();
   // Dragging/clicking the slider leaves it focused (needed so arrow keys
   // can keep nudging it afterward) -- same :focus-within-outlives-:hover
   // gap the chrome-toggle mode buttons had, but blurring on every

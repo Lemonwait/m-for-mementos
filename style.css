@@ -301,7 +301,8 @@ body.cursor-hidden *{
 #shadows-toggle svg{ fill: currentColor; }
 #chrome-toggle[aria-pressed="true"],
 #shadows-toggle[aria-pressed="true"]{
-  color: var(--accent);
+  color: var(--ink);
+  background: var(--accent-dim);
   border-color: var(--accent);
 }
 #sound-toggle .bar{
@@ -315,7 +316,8 @@ body.cursor-hidden *{
 }
 /* On: lit accent color, gentle staggered equalizer bounce loop. */
 #sound-toggle[aria-pressed="true"]{
-  color: var(--accent);
+  color: var(--ink);
+  background: var(--accent-dim);
   border-color: var(--accent);
 }
 #sound-toggle[aria-pressed="true"] .bar{
