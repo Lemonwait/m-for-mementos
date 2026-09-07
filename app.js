@@ -39,7 +39,13 @@
     const tagsHtml = m.tags
       .map((t) => {
         if (!t.url) return `<span class="tag-chip">${escapeHtml(t.label)}</span>`;
-        const ytId = extractYoutubeId(t.url);
+        // t.ytId is an explicit override for when the tag's own url
+        // points somewhere non-YouTube (e.g. Bilibili) on purpose --
+        // that link is what double-click/long-press opens, but the
+        // in-site embed still plays this id rather than having nothing
+        // to switch to. Falls back to extracting from the url itself
+        // for every ordinary tag that doesn't set this.
+        const ytId = t.ytId || extractYoutubeId(t.url);
         if (!ytId) {
           return `<a class="tag-chip" href="${escapeAttr(t.url)}" target="_blank" rel="noopener">${escapeHtml(t.label)}</a>`;
         }

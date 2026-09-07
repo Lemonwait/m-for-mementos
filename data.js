@@ -856,7 +856,8 @@ const MEMENTOS = [
       },
       {
         "label": "EP: Ling II",
-        "url": "https://youtu.be/uI_qaDkQaTk"
+        "url": "https://www.bilibili.com/video/BV1H14y1M7tj/?spm_id_from=333.337.search-card.all.click",
+        "ytId": "uI_qaDkQaTk"
       },
       {
         "label": "EP: Lee",
