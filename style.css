@@ -756,6 +756,19 @@ body.shadows-hidden .yt-custom-controls{
 .yt-frame.shades-autohide .yt-custom-controls.active{
   opacity: 1;
 }
+/* Site-wide "hide UI" (body.chrome-hidden) never touched this bar at
+   all before -- confirmed live: the wordmark/counter/rail/text panel
+   all correctly hid under idle/always/manual mode, but every video's
+   own control bar stayed put regardless of which mode was active.
+   !important so it wins over every rule above (hover-reveal,
+   shades-autohide, .active) -- once chrome itself is hidden there's no
+   case where the video's own controls should still be reachable by
+   hovering around it, since idle mode's own mousemove listener would
+   un-hide chrome the instant the mouse moved to reach them anyway. */
+body.chrome-hidden .yt-custom-controls{
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
 .yt-icon-btn{
   flex: none;
   width: 28px;

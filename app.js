@@ -292,6 +292,13 @@
   }
   function setChromeMode(mode) {
     chromeMode = mode;
+    try {
+      localStorage.setItem("chromeMode", mode);
+    } catch (e) {
+      // Storage can throw (disabled, some private-browsing contexts) --
+      // the mode still works for this visit, it just won't be
+      // remembered next time.
+    }
     clearTimeout(idleHideTimer);
     document.body.classList.remove("cursor-hidden");
     chromeModeBtns.forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === mode)));
@@ -304,6 +311,22 @@
       updateChromeToggleVisual(); // manual mode has no hide/show side effect of its own
     }
   }
+
+  // Restores whichever mode was last explicitly chosen (persisted just
+  // above, inside setChromeMode) so a reload doesn't forget it. "idle"
+  // (1s) is the default for a genuinely first-time visitor with nothing
+  // saved yet, by request -- everyone else keeps whatever they last
+  // picked, "manual" (off) included.
+  function loadSavedChromeMode() {
+    try {
+      const saved = localStorage.getItem("chromeMode");
+      if (saved === "idle" || saved === "always" || saved === "manual") return saved;
+    } catch (e) {
+      // Falls through to the same first-time-visitor default below.
+    }
+    return "idle";
+  }
+  setChromeMode(loadSavedChromeMode());
 
   chromeToggleBtn.addEventListener("click", () => {
     // The universal escape hatch -- always drops back to plain manual
