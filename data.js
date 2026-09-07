@@ -843,16 +843,24 @@ const MEMENTOS = [
     "image": "https://lemonwait.github.io/doc/m/43.webp",
     "tags": [
       {
-        "label": "PV",
+        "label": "PV1",
         "url": "https://www.youtube.com/watch?v=-IJ2on7VCrQ&list=PLbuSQ8SJFnFEohoQSGRiVHOjpkPmmjeBA&index=122"
       },
       {
-        "label": "EP",
-        "url": "https://youtu.be/zTO5QNxfkl8?si=5MY0Q5YOQtWhCI-S"
+        "label": "PV2",
+        "url": "https://youtu.be/eKY27D26Cp4"
       },
       {
-        "label": "EP II",
+        "label": "EP: Ling",
         "url": "https://www.youtube.com/watch?v=0kK3oNcbYGA&list=PLbuSQ8SJFnFEHL4_T9S0whD-TevceJIsl&index=89"
+      },
+      {
+        "label": "EP: Ling II",
+        "url": "https://youtu.be/uI_qaDkQaTk"
+      },
+      {
+        "label": "EP: Lee",
+        "url": "https://youtu.be/423BcsNSouw"
       }
     ],
     "video": {

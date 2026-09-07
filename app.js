@@ -37,11 +37,23 @@
     section.dataset.index = m.i;
 
     const tagsHtml = m.tags
-      .map((t) =>
-        t.url
-          ? `<a class="tag-chip" href="${escapeAttr(t.url)}" target="_blank" rel="noopener">${escapeHtml(t.label)}</a>`
-          : `<span class="tag-chip">${escapeHtml(t.label)}</span>`
-      )
+      .map((t) => {
+        if (!t.url) return `<span class="tag-chip">${escapeHtml(t.label)}</span>`;
+        const ytId = extractYoutubeId(t.url);
+        if (!ytId) {
+          return `<a class="tag-chip" href="${escapeAttr(t.url)}" target="_blank" rel="noopener">${escapeHtml(t.label)}</a>`;
+        }
+        // Switchable variant: a real click plays it in-site instead of
+        // navigating away (see the click/dblclick/long-press wiring
+        // below), so this is a <button>, not a link -- there's no
+        // href for a single click to ever fall back to by mistake.
+        // Starts pre-selected when it's the one m.video.id (and
+        // therefore the .yt-frame's own initial video) already came
+        // from, so the highlighted chip matches what's actually
+        // playing from the very first paint, not just after a click.
+        const selected = m.video && ytId === m.video.id;
+        return `<button type="button" class="tag-chip${selected ? " selected" : ""}" data-yt-id="${escapeAttr(ytId)}" data-url="${escapeAttr(t.url)}">${escapeHtml(t.label)}</button>`;
+      })
       .join("");
 
     // Every video card (any m.video, not just one special-cased ID) gets
@@ -69,8 +81,93 @@
       </div>
     `;
     frag.appendChild(section);
+
+    // Single click plays the variant in-site; double click or a
+    // press-and-hold instead opens its real YouTube page, exactly like
+    // the request specified. clickTimer is what makes single vs double
+    // distinguishable at all: a lone click doesn't act until this delay
+    // passes unchallenged, since the browser's own click/click/dblclick
+    // sequence means a genuine double-click always fires two plain
+    // clicks first -- each one just re-arms the same pending timer
+    // (never reaching zero) until dblclick itself cancels it for good.
+    // longPressFired guards the click handler from ALSO firing once the
+    // mouse is released after a long-press already acted.
+    section.querySelectorAll("button.tag-chip[data-yt-id]").forEach((btn) => {
+      let longPressTimer = null;
+      let longPressFired = false;
+      let clickTimer = null;
+      btn.addEventListener("mousedown", () => {
+        longPressFired = false;
+        longPressTimer = setTimeout(() => {
+          longPressFired = true;
+          window.open(btn.dataset.url, "_blank", "noopener");
+        }, 550);
+      });
+      btn.addEventListener("mouseup", () => clearTimeout(longPressTimer));
+      btn.addEventListener("mouseleave", () => clearTimeout(longPressTimer));
+      btn.addEventListener("click", () => {
+        if (longPressFired) {
+          longPressFired = false;
+          return;
+        }
+        clearTimeout(clickTimer);
+        clickTimer = setTimeout(() => switchTagVariant(section, btn), 250);
+      });
+      btn.addEventListener("dblclick", () => {
+        clearTimeout(clickTimer);
+        window.open(btn.dataset.url, "_blank", "noopener");
+      });
+    });
+
+    // "info chunk" -- see pauseAutoHideForHover's own comment for why
+    // reading the quote/name/tags shouldn't get yanked away out from
+    // under the mouse just for sitting still. Each piece individually,
+    // not the shared .event-body wrapper -- that one's deliberately
+    // pointer-events:none (see its own CSS comment) and would never
+    // actually receive a hover to begin with.
+    section.querySelectorAll(".event-index, .event-date, .event-quote, .event-name, .event-tags").forEach((el) => {
+      el.addEventListener("mouseenter", pauseAutoHideForHover);
+      el.addEventListener("mouseleave", resumeAutoHideAfterHover);
+    });
   });
   eventsRoot.appendChild(frag);
+
+  // Swaps the event's already-mounted player over to a different tag's
+  // video via the YouTube IFrame API's own loadVideoById, rather than
+  // tearing down and remounting -- keeps the existing progress-bar
+  // polling/seek-track wiring (both bound to this same player instance)
+  // working untouched against whatever's currently loaded. Re-applies
+  // the site's mute/volume state explicitly afterward rather than
+  // trusting it to survive the swap -- the same lesson as
+  // setSoundEnabled's own fix earlier: don't assume a YouTube API call
+  // leaves an unrelated-sounding setting alone. Also updates the
+  // holder's own data-yt-id, so scrolling this card out and back (a
+  // full unmount/remount, see enforceMountCap) resumes whichever
+  // variant was last picked instead of reverting to the default PV.
+  // Falls back to just opening the link if the player isn't actually
+  // ready yet (e.g. clicked the instant the card came into view) --
+  // there's nothing to swap in that case.
+  function switchTagVariant(section, btn) {
+    const holder = section.querySelector(".yt-frame");
+    const entry = holder && entryByHolder.get(holder);
+    if (!entry || !entry.player || typeof entry.player.loadVideoById !== "function") {
+      window.open(btn.dataset.url, "_blank", "noopener");
+      return;
+    }
+    const newId = btn.dataset.ytId;
+    if (holder.dataset.ytId === newId) return; // already the active variant
+    entry.player.loadVideoById(newId);
+    holder.dataset.ytId = newId;
+    if (typeof entry.player.setVolume === "function") entry.player.setVolume(volumeLevel);
+    if (soundEnabled) {
+      if (typeof entry.player.unMute === "function") entry.player.unMute();
+    } else if (typeof entry.player.mute === "function") {
+      entry.player.mute();
+    }
+    section.querySelectorAll(".tag-chip[data-yt-id]").forEach((el) => {
+      el.classList.toggle("selected", el === btn);
+    });
+  }
 
   function escapeHtml(str) {
     return String(str).replace(/[&<>"']/g, (c) => ({
@@ -79,6 +176,17 @@
   }
   function escapeAttr(str) {
     return escapeHtml(str);
+  }
+  // Same extraction data.js's own video.id was hand-derived with (youtu.be
+  // short links and youtube.com/watch?v= both covered) -- run live here
+  // instead of baked into the data, so a tag switching between "plays
+  // in-site" and "just links out" is purely a function of its own URL,
+  // not something that needs updating in two places. Bilibili/wiki/etc.
+  // links (a handful of tags, mostly recent CN-only entries) simply don't
+  // match, and fall back to the plain external-link rendering below.
+  function extractYoutubeId(url) {
+    const match = /(?:youtu\.be\/|[?&]v=)([A-Za-z0-9_-]{11})/.exec(url || "");
+    return match ? match[1] : null;
   }
   // The big year watermark now covers the year itself, so the small date
   // line only needs "Mon DD" — strips a trailing ", YYYY". The one entry
@@ -319,6 +427,46 @@
     }
   }
 
+  // Hovering three specific zones -- the text panel, a video's own
+  // control bar, and the year rail (wired at each of their own creation
+  // points below) -- pauses auto-hide entirely while it lasts, for
+  // every mode that has one. Idle mode's own countdown only ever reset
+  // on actual mouse MOVEMENT anywhere on the page; resting the cursor
+  // (not moving it, just parked reading text or fine-adjusting a
+  // slider) still counted as "idle" and hid the UI mid-interaction
+  // without this. "always" mode has no countdown to pause -- it hides
+  // immediately by design -- so this temporarily shows it instead,
+  // reverting the instant the hover ends. No effect in "manual": that
+  // mode's hidden/shown state is a deliberate, sticky choice nothing
+  // else should disturb.
+  // Also read by the site-wide mousemove listener further below -- the
+  // browser's own hover state alone isn't enough to act on here, since
+  // clearing the timer once on mouseenter doesn't keep it cleared: any
+  // further mousemove at all (even the tiniest real-mouse jitter while
+  // still sitting inside the same zone) would otherwise immediately
+  // re-arm it again through that completely separate listener, which
+  // has no way to know a hover zone is why the mouse just moved. This
+  // flag is that missing link -- while true, that listener still shows
+  // the UI (harmless, already visible) but skips the re-arm, leaving
+  // the countdown genuinely paused for as long as the hover lasts,
+  // confirmed live: without this exact fix, hovering the quote text in
+  // 1s mode still hid everything within a few seconds regardless.
+  let hoveringPauseZone = false;
+  function pauseAutoHideForHover() {
+    hoveringPauseZone = true;
+    if (chromeMode === "manual") return;
+    clearTimeout(idleHideTimer);
+    document.body.classList.remove("cursor-hidden");
+    if (document.body.classList.contains("chrome-hidden")) setChromeHidden(false);
+  }
+  function resumeAutoHideAfterHover() {
+    hoveringPauseZone = false;
+    if (chromeMode === "always") setChromeHidden(true);
+    else if (chromeMode in IDLE_DELAYS) armIdleHideTimer();
+  }
+  yearRail.addEventListener("mouseenter", pauseAutoHideForHover);
+  yearRail.addEventListener("mouseleave", resumeAutoHideAfterHover);
+
   // Restores whichever mode was last explicitly chosen (persisted just
   // above, inside setChromeMode) so a reload doesn't forget it. "idle1"
   // (1s) is the default for a genuinely first-time visitor with nothing
@@ -374,7 +522,11 @@
     if (!(chromeMode in IDLE_DELAYS)) return;
     document.body.classList.remove("cursor-hidden");
     setChromeHidden(false);
-    armIdleHideTimer();
+    // Skipped while parked in one of the three pause zones (see
+    // hoveringPauseZone's own comment) -- rearming here on every
+    // stray pixel of movement is exactly what silently undid the
+    // pause otherwise.
+    if (!hoveringPauseZone) armIdleHideTimer();
   });
 
   // ---- site-wide "hide shadows" toggle ----
@@ -1144,6 +1296,11 @@
     holder.appendChild(playerEl);
     const clickCatcher = buildClickCatcher(holder);
     const controls = buildCustomControls(holder);
+    // "the playback slider" -- see pauseAutoHideForHover's own comment.
+    // The whole bar, not just the seek track, so resting on the
+    // play/pause or CC buttons counts too.
+    controls.bar.addEventListener("mouseenter", pauseAutoHideForHover);
+    controls.bar.addEventListener("mouseleave", resumeAutoHideAfterHover);
     function togglePlayPause() {
       const state = player.getPlayerState();
       if (state === 1) {

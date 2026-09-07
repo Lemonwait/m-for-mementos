@@ -410,9 +410,16 @@ body.cursor-hidden *{
   gap: 14px;
   transition: opacity 0.3s ease;
 }
+/* pointer-events deliberately NOT set to none here (unlike most other
+   chrome-hidden rules) -- it needs to stay genuinely hoverable even
+   while invisible, so mousing over where it sits still triggers
+   pauseAutoHideForHover's temporary reveal in "always" mode (which has
+   no other way back to it, unlike idle mode's any-movement reveal).
+   Confirmed live as a real gap otherwise: with pointer-events:none
+   here, the mouseenter this depends on never fired at all while
+   already hidden. */
 body.chrome-hidden #year-rail{
   opacity: 0;
-  pointer-events: none;
 }
 .year-dot{
   display: flex;
@@ -788,13 +795,14 @@ body.shadows-hidden .yt-custom-controls{
    all correctly hid under idle/always/manual mode, but every video's
    own control bar stayed put regardless of which mode was active.
    !important so it wins over every rule above (hover-reveal,
-   shades-autohide, .active) -- once chrome itself is hidden there's no
-   case where the video's own controls should still be reachable by
-   hovering around it, since idle mode's own mousemove listener would
-   un-hide chrome the instant the mouse moved to reach them anyway. */
+   shades-autohide, .active) regardless of what state those are in.
+   pointer-events deliberately left at its own default (auto) rather
+   than also forced none here -- it needs to stay genuinely hoverable
+   even while invisible, so resting on it still counts as "the playback
+   slider" for pauseAutoHideForHover's temporary reveal (this app.js
+   own comment) in "always" mode, which has no other way back to it. */
 body.chrome-hidden .yt-custom-controls{
   opacity: 0 !important;
-  pointer-events: none !important;
 }
 .yt-icon-btn{
   flex: none;
@@ -934,12 +942,24 @@ body.chrome-hidden .event.active .event-body{
      why keeping it on the exit side specifically was the actual source
      of the overlap corruption. */
 }
+/* pointer-events:auto plus width:fit-content on each of these four
+   (event-tags gets the same treatment just below) -- .event-body
+   itself is deliberately pointer-events:none (see its own comment: an
+   oversized invisible box otherwise ate hover/click meant for the
+   video controls underneath). These four are block-level and would
+   otherwise stretch to fill that same oversized container width even
+   though the visible text is much narrower -- fit-content shrinks the
+   actual HOVERABLE box down to just the text/border it renders,
+   opting back into pointer-events (needed for the auto-hide pause on
+   hover below) without reintroducing that original bug. */
 .event-index{
   font-family: var(--font-display);
   font-size: 12px;
   letter-spacing: 0.2em;
   color: var(--accent);
   margin: 0 0 10px;
+  pointer-events: auto;
+  width: fit-content;
 }
 
 .event-date{
@@ -949,6 +969,8 @@ body.chrome-hidden .event.active .event-body{
   color: var(--ink-dim);
   text-transform: uppercase;
   margin: 0 0 14px;
+  pointer-events: auto;
+  width: fit-content;
 }
 
 .event-quote{
@@ -959,6 +981,8 @@ body.chrome-hidden .event.active .event-body{
   color: var(--ink);
   margin: 0 0 18px;
   max-width: 22ch;
+  pointer-events: auto;
+  width: fit-content;
 }
 .event-quote::before{ content: "“"; color: var(--accent); }
 .event-quote::after{ content: "”"; color: var(--accent); }
@@ -973,11 +997,15 @@ body.chrome-hidden .event.active .event-body{
   margin: 0 0 18px;
   border-left: 3px solid var(--accent);
   padding-left: 14px;
+  pointer-events: auto;
+  width: fit-content;
 }
 
 .event-tags{
   display: flex;
   flex-wrap: wrap;
+  pointer-events: auto;
+  width: fit-content;
   gap: 10px;
 }
 .tag-chip{
@@ -995,10 +1023,30 @@ body.chrome-hidden .event.active .event-body{
   background: rgba(255,255,255,0.03);
   transition: all 0.2s ease;
 }
-a.tag-chip:hover{
+/* Switchable variants render as <button>, not <a> -- undoes the
+   browser's own default button chrome (its own border/background/font
+   would otherwise fight every rule above) so it reads identically to
+   the plain link chips beside it. */
+button.tag-chip{
+  font: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+a.tag-chip:hover,
+button.tag-chip:hover{
   color: var(--bg);
   background: var(--accent);
   border-color: var(--accent);
+}
+/* The currently-playing variant (see app.js's switchTagVariant) --
+   same filled-blue/white-text language as the top-bar's own pressed
+   icons, bolded to read as a clear, settled "this one's active" state
+   rather than the transient brightness of a hover. */
+.tag-chip.selected{
+  color: var(--ink);
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  font-weight: 700;
 }
 
 /* ---------- outro ---------- */
