@@ -705,16 +705,36 @@ body.chrome-hidden #year-watermark{
    finishes the video is fully opaque anyway, so the image's own opacity
    stops mattering at all from that point on. */
 
+/* A single, permanent, un-duplicated home for whichever video is
+   actually mounted right now -- see mountCustomPlayer's own comment in
+   app.js for the real, confirmed bug this exists to fix: a mounted
+   .yt-frame's iframe was UNCLICKABLE (not an automation artifact, a
+   real mouse reproduced it) specifically because it sat nested inside
+   one of the 131 always-present, identically-positioned .event-media
+   elements every event pre-renders. z-index:2 -- unambiguously above
+   .event-media's own 0/1 (whichever card is active), unambiguously
+   below .event-body's active 3 and the top bar's 100 -- puts the video
+   back exactly where it visually sat before this existed, just no
+   longer nested inside the thing that broke it. pointer-events:none
+   with .yt-frame (a child, once one is actually mounted here) supplying
+   its own auto -- same "empty parent shouldn't catch stray clicks"
+   pattern as .event-body and everything under it. */
+#video-slot{
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
 .yt-frame{
   position: absolute;
   inset: 0;
   overflow: hidden;
   pointer-events: auto;
-  /* Fills the gap on either side when the iframe below is narrower than
-     this frame (fit-height can pillarbox a wide, short browser window --
-     see that rule's own comment) with a plain letterbox bar instead of
-     whatever would otherwise show through from behind (the still image
-     underneath, at its own unrelated crop). */
+  /* Fills whichever gap the contain-fit iframe below leaves (pillarbox
+     on a wide window, letterbox on a narrow one -- see that rule's own
+     comment) with a plain bar instead of whatever would otherwise show
+     through from behind (the still image underneath, at its own
+     unrelated crop). */
   background: var(--bg);
 }
 /* A suppress-and-reveal cover (.yt-suppress-feedback, hiding the whole
@@ -722,26 +742,33 @@ body.chrome-hidden #year-watermark{
    here -- removed per explicit request, its own fade in/out read as two
    flickers of its own. See git history if it's worth revisiting. */
 .yt-frame iframe{
-  /* Fit-to-height, not cover -- a previous version oversized whichever
-     axis it took to fill BOTH dimensions (cover), which looked right on
-     a tall/narrow window but crops the top and bottom on a typical wide
-     desktop window (confirmed live: the in-game HUD's top and bottom
-     edges pushed past the visible frame). Sizing purely off height
-     instead means the full video is always visible top-to-bottom; on a
-     wide window that leaves a gap on either side instead, filled by
-     .yt-frame's own background as a plain letterbox bar rather than
-     cropping anything. Only the browser's real Fullscreen API (a
-     different code path entirely, sizing against actual screen
-     dimensions) would need different math than this -- nothing on this
-     site currently triggers it. Using vh rather than percentage: .yt-
-     frame is always exactly viewport-sized (position:fixed inset:0 the
-     whole chain up), so 100vh is equivalent to "100% of .yt-frame" here,
-     and stays anchored to the real viewport either way. */
+  /* Contain, not cover or fit-height -- two earlier versions each
+     oversized one axis to fill BOTH dimensions with no visible bars
+     (cover: crops top/bottom on a wide window; fit-height: crops the
+     sides on a narrow one), and on a narrow window that crop pushed a
+     real chunk of YouTube's own native control bar (controls:1 below)
+     off-screen entirely -- confirmed live, roughly a quarter of a
+     1689px-wide iframe sat outside a 838px viewport on EACH side, play
+     button and settings/fullscreen icons included. Since the native bar
+     is drawn INSIDE the iframe's own coordinate space (nothing we can
+     reach into or reposition separately -- cross-origin), the only way
+     to guarantee it's always fully on-screen is to never let the iframe
+     itself exceed the viewport in either dimension. That's exactly what
+     YouTube's own site does with its own player (scales to whichever
+     axis fits, letterboxing/pillarboxing rather than cropping) -- these
+     two min()s are the same "contain" fit, computed per-axis so
+     whichever dimension is more restrictive wins: on a wide window
+     177.78vh < 100vw, so width settles there (pillarbox) while height
+     fills exactly 100vh; on a narrow window it's the reverse (letterbox
+     top/bottom), and width never exceeds 100vw. Using vh/vw rather than
+     percentages: .yt-frame is always exactly viewport-sized (position:
+     fixed inset:0 the whole chain up), so these stay anchored to the
+     real viewport either way. */
   position: absolute;
   top: 50%;
   left: 50%;
-  height: 100vh;
-  width: 177.78vh; /* 100vh * 16/9 -- the iframe's own box, kept at the video's native aspect ratio */
+  width: min(100vw, 177.78vh); /* 100vh * 16/9 */
+  height: min(100vh, 56.25vw); /* 100vw * 9/16 */
   transform: translate(-50%, -50%);
   border: 0;
 }
@@ -753,10 +780,46 @@ body.chrome-hidden #year-watermark{
 /* A click-catcher overlay (stopping a direct iframe click from
    triggering YouTube's own native play/pause flash under controls:0)
    plus a whole custom control bar (play/pause, seek track, CC toggle,
-   its own shades-auto-hide toggle) used to live here. Removed in favor
+   its own shades-auto-hide toggle) used to live here, removed in favor
    of YouTube's own native bar (controls:1 in app.js's playerVars) --
-   matching how sites like TED embed theirs. See git history if it's
-   worth revisiting. */
+   matching how sites like TED embed theirs. A viewport-anchored
+   fallback seek bar (papering over native's own bar going partially
+   off-screen on a narrow window, since .yt-frame iframe used to crop
+   the sides to avoid ever showing a letterbox) lived here after that,
+   in turn removed now that the iframe fits by contain instead --
+   native's own bar can no longer go off-screen in the first place
+   (see .yt-frame iframe's own comment), so there's nothing left for a
+   fallback to paper over. See git history for either full version. */
+.yt-rotate-hint{
+  display: none;
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 4;
+  width: 56px; height: 56px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--accent-dim);
+  border-radius: 50%;
+  background: rgba(5,7,10,0.75);
+  color: var(--accent);
+  cursor: pointer;
+  pointer-events: auto;
+  transition: opacity 0.3s ease;
+}
+.yt-rotate-hint svg{ width: 26px; height: 26px; fill: currentColor; }
+/* Same contain-fit math as .yt-frame iframe -- narrower than 16:9 is
+   exactly when that rule letterboxes (top/bottom bars) instead of
+   filling the frame, so this only ever offers to fix that specific
+   case, never showing on an already-full-bleed wide/pillarboxed
+   window. */
+@media (max-aspect-ratio: 16/9){
+  .yt-rotate-hint{ display: flex; }
+}
+body.chrome-hidden .yt-rotate-hint{
+  opacity: 0;
+  pointer-events: none;
+}
 
 .event-media::after{
   content: "";

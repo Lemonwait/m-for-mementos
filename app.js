@@ -3,6 +3,10 @@
   const yearRail = document.getElementById("year-rail");
   const counterEl = document.getElementById("counter");
   const progressBar = document.getElementById("progress-bar");
+  // See mountCustomPlayer's own comment on why the active video's
+  // .yt-frame gets physically relocated here while mounted, rather than
+  // staying nested inside its own .event-media.
+  const videoSlot = document.getElementById("video-slot");
 
   const total = MEMENTOS.length;
   const years = [...new Set(MEMENTOS.map((m) => m.year))];
@@ -154,7 +158,7 @@
   // ready yet (e.g. clicked the instant the card came into view) --
   // there's nothing to swap in that case.
   function switchTagVariant(section, btn) {
-    const holder = section.querySelector(".yt-frame");
+    const holder = section._videoHolder;
     const entry = holder && entryByHolder.get(holder);
     if (!entry || !entry.player || typeof entry.player.loadVideoById !== "function") {
       window.open(btn.dataset.url, "_blank", "noopener");
@@ -750,8 +754,42 @@
   // explicit request in favor of YouTube's own native bar (controls:1
   // below) -- matching how sites like TED embed theirs, and getting
   // idle-fade, captions, quality selection, and scrubbing for free
-  // instead of reimplementing each. See git history if it's worth
-  // revisiting.
+  // instead of reimplementing each. A viewport-anchored fallback seek
+  // bar (papering over native's own bar going partially off-screen on a
+  // narrow window) lived here after that, in turn removed now that
+  // .yt-frame iframe fits by contain instead of cropping -- native's own
+  // bar can no longer go off-screen in the first place. See git history
+  // for either full version.
+  //
+  // What's left for a narrow/portrait window: contain-fit already shows
+  // the complete, fully-interactive video (letterboxed, not cropped), so
+  // nothing is actually BROKEN there -- this button is a convenience
+  // offer, not a fix. Best-effort only, deliberately not reported back
+  // to the user either way: iOS Safari doesn't implement the Orientation
+  // Lock API at all, and Chrome/Android only allows locking while the
+  // requested element is actually in fullscreen, so this fails silently
+  // on a real chunk of browsers no matter what. Locking the FRAME (not
+  // the whole page) into fullscreen first, rather than the document, so
+  // the site's own chrome doesn't come along for the ride.
+  function buildRotateHint(holder) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "yt-rotate-hint";
+    btn.setAttribute("aria-label", "Rotate to landscape");
+    btn.innerHTML = `<svg viewBox="0 0 24 24"><path d="M7 4h8a2 2 0 0 1 2 2v3h-2V6H7v12h5v2H7a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><path d="M17.65 13.35A5.5 5.5 0 0 1 13 19v-2a3.5 3.5 0 0 0 2.94-5.4L14 13.5V9h4.5l-1.85 1.85c.63.72 1 1.63 1 2.65z"/></svg>`;
+    btn.addEventListener("click", async () => {
+      try {
+        if (holder.requestFullscreen) await holder.requestFullscreen();
+        if (screen.orientation && screen.orientation.lock) {
+          await screen.orientation.lock("landscape");
+        }
+      } catch (e) {
+        // Unsupported or blocked -- see this function's own comment.
+      }
+    });
+    holder.appendChild(btn);
+    return btn;
+  }
 
   // ---- "burn" reveal: static image -> video, via an organic noise mask ----
   // Disabled for now (the call site in mountCustomPlayer's onReady is
@@ -1034,6 +1072,10 @@
     delete entry.holder.dataset.customMounted;
     delete entry.holder._wantsActivate;
     entryByHolder.delete(entry.holder);
+    // Move the holder back home -- see mountCustomPlayer's own comment
+    // for why it left in the first place. Harmless to skip if somehow
+    // already home (falsy _homeParent) or mid-relocation elsewhere.
+    if (entry.holder._homeParent) entry.holder._homeParent.appendChild(entry.holder);
   }
 
   function enforceMountCap() {
@@ -1130,12 +1172,39 @@
     // Only now does a scroll-out mean anything to reset -- a preload that
     // never got shown just sits in mountedQueue until the cap reclaims
     // it (see enforceMountCap), same as it always could.
-    observeVideoVisibility(entry.holder.closest(".event"), entry);
+    //
+    // entry.holder.closest(".event") NO LONGER finds it -- a real,
+    // confirmed bug once the holder started physically relocating into
+    // #video-slot while mounted (see mountCustomPlayer's own comment):
+    // .closest() only walks the holder's CURRENT ancestors, and
+    // #video-slot sits outside #events entirely. .homeParent (the
+    // .event-media it was moved OUT of) never moves, so climbing from
+    // there instead still reaches the right section either way.
+    observeVideoVisibility(entry.holder._homeParent.closest(".event"), entry);
   }
 
   async function mountCustomPlayer(holder, activateImmediately) {
     if (holder.dataset.customMounted) return;
     holder.dataset.customMounted = "1";
+    // A real, confirmed bug otherwise: clicks on the native player
+    // (controls:1 below) silently did nothing -- not an automation
+    // artifact, reproduced with a real mouse. Root cause, isolated by
+    // testing the exact same iframe reparented to a few different
+    // spots: document.elementFromPoint (and, it turns out, real click
+    // dispatch along with it) resolved to .event-media -- the iframe's
+    // own GRANDPARENT -- instead of the iframe itself, specifically
+    // when that iframe sat nested inside one of the 131 stacked,
+    // always-present position:fixed .event-media elements every event
+    // pre-renders. Reparenting the very same holder to a plain,
+    // un-duplicated position:fixed element elsewhere in the DOM (no
+    // other change) made hit-testing resolve correctly every time --
+    // so the holder physically moves into the single shared #video-slot
+    // (see its own comment in style.css) for as long as it's actually
+    // mounted, and moves back home in unmountVideoPlayer once it isn't.
+    // Stored on the holder itself since, once moved, it's no longer
+    // reachable via a plain .closest() from its original spot.
+    holder._homeParent = holder._homeParent || holder.parentElement;
+    videoSlot.appendChild(holder);
     // A real, confirmed bug otherwise: dataset.customMounted alone can't
     // tell THIS call apart from a LATER one for the same holder. Speeding
     // down then back up fast enough unmounts a holder (clearing the
@@ -1214,7 +1283,11 @@
       },
       events: {
         onReady: (e) => {
-          holder.closest(".event-media")?.classList.add("video-ready");
+          // holder.closest(".event-media") stopped finding it the same
+          // way observeVideoVisibility's own lookup did (see its
+          // comment) -- _homeParent IS the .event-media, no .closest()
+          // needed at all once relocation is accounted for.
+          holder._homeParent?.classList.add("video-ready");
           entry.ready = true;
           // A real, confirmed bug in unconditionally pausing here (as
           // this used to do) before checking _wantsActivate: native
@@ -1245,6 +1318,7 @@
         },
       },
     });
+    buildRotateHint(holder);
     const entry = {
       holder, player,
       pause: () => player.pauseVideo(),
@@ -1264,6 +1338,13 @@
 
   document.querySelectorAll(".yt-frame[data-yt-id]").forEach((holder) => {
     const section = holder.closest(".event");
+    // A stable back-reference, captured once here while the holder is
+    // still sitting in its original spot -- switchTagVariant's own
+    // section.querySelector(".yt-frame") stopped finding it the same
+    // way observeVideoVisibility's lookup did (see that one's own
+    // comment): once mounted, the holder physically relocates into
+    // #video-slot, outside this section entirely.
+    section._videoHolder = holder;
 
     // The wider-margin preload observer (600px head start, same as the
     // image lazy-loader) that used to live here is removed, by request,
