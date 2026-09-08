@@ -695,38 +695,38 @@ body.chrome-hidden #year-watermark{
   inset: 0;
   overflow: hidden;
   pointer-events: auto;
+  /* Fills the gap on either side when the iframe below is narrower than
+     this frame (fit-height can pillarbox a wide, short browser window --
+     see that rule's own comment) with a plain letterbox bar instead of
+     whatever would otherwise show through from behind (the still image
+     underneath, at its own unrelated crop). */
+  background: var(--bg);
 }
 /* A suppress-and-reveal cover (.yt-suppress-feedback, hiding the whole
    frame to mask YouTube's native play/pause icon flash) used to live
    here -- removed per explicit request, its own fade in/out read as two
    flickers of its own. See git history if it's worth revisiting. */
 .yt-frame iframe{
-  /* NOT a plain full-fill anymore -- that made OUR box fill the frame,
-     but YouTube's own player still renders the actual 16:9 video
-     letterboxed/pillarboxed WITHIN that box to preserve its native aspect
-     ratio (confirmed live: visible black bars on a desktop-width browser
-     window, which is wider than 16:9). There's no playerVar or API
-     control over that -- it's YouTube's own internal player.html
-     behavior. Standard workaround: oversize the iframe itself in
-     whichever axis would otherwise be letterboxed, so YouTube's own
-     "contain" fit lands on a box that's already bigger than the visible
-     frame -- the video ends up covering it with the excess simply
-     clipped by .yt-frame's overflow:hidden, the same "cover" look
-     fullscreen already has natively (that's a different code path
-     entirely -- the browser's real Fullscreen API, which sizes the video
-     against actual screen dimensions directly, no letterboxing math
-     needed). Using vw/vh rather than percentages: .yt-frame is always
-     exactly viewport-sized (position:fixed inset:0 the whole chain up),
-     so these are equivalent to "of .yt-frame" here, and vw/vh keep the
-     math anchored to the real viewport instead of this element's own
-     (potentially oversized) box referencing itself. */
+  /* Fit-to-height, not cover -- a previous version oversized whichever
+     axis it took to fill BOTH dimensions (cover), which looked right on
+     a tall/narrow window but crops the top and bottom on a typical wide
+     desktop window (confirmed live: the in-game HUD's top and bottom
+     edges pushed past the visible frame). Sizing purely off height
+     instead means the full video is always visible top-to-bottom; on a
+     wide window that leaves a gap on either side instead, filled by
+     .yt-frame's own background as a plain letterbox bar rather than
+     cropping anything. Only the browser's real Fullscreen API (a
+     different code path entirely, sizing against actual screen
+     dimensions) would need different math than this -- nothing on this
+     site currently triggers it. Using vh rather than percentage: .yt-
+     frame is always exactly viewport-sized (position:fixed inset:0 the
+     whole chain up), so 100vh is equivalent to "100% of .yt-frame" here,
+     and stays anchored to the real viewport either way. */
   position: absolute;
   top: 50%;
   left: 50%;
-  width: 100vw;
-  height: 56.25vw; /* 100vw * 9/16 -- the iframe's own box, kept at the video's native aspect ratio */
-  min-width: 177.78vh; /* 100vh * 16/9 -- whichever axis needs to grow to cover a taller-than-16:9 viewport instead */
-  min-height: 100vh;
+  height: 100vh;
+  width: 177.78vh; /* 100vh * 16/9 -- the iframe's own box, kept at the video's native aspect ratio */
   transform: translate(-50%, -50%);
   border: 0;
 }
@@ -735,127 +735,13 @@ body.chrome-hidden #year-watermark{
    every video card showed before mounting) -- removed now that every
    video card auto-mounts via mountCustomPlayer() in app.js instead. */
 
-/* Sits above the raw iframe, below the controls bar -- intercepts every
-   click on the frame so it can never reach the actual YouTube iframe
-   underneath (see buildClickCatcher's comment in app.js for why that
-   matters: a direct click on the iframe triggers YouTube's own native
-   play/pause toggle and center icon flash even with controls:0). */
-.yt-click-catcher{
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  cursor: pointer;
-}
-
-/* Custom controls for every video card: YouTube's own native control bar
-   is turned off (controls:0 in playerVars) so this can replace it,
-   matching the site's own blue/dark theme instead of YouTube's red/white
-   chrome. */
-.yt-custom-controls{
-  position: absolute;
-  left: 0; right: 0; bottom: 0;
-  z-index: 3;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
-  pointer-events: auto;
-  background: linear-gradient(to top, rgba(5,7,10,0.85) 0%, rgba(5,7,10,0) 100%);
-  opacity: 0;
-  transition: opacity 0.3s ease, background 0.3s ease;
-}
-/* Same site-wide shadows-hidden toggle that strips #top-bar's own
-   backdrop (see its own comment) -- this is the OTHER dark gradient on
-   the site, so it's the other half of the same button. The controls
-   themselves (buttons/track) keep their own visibility/styling either
-   way -- this only removes the backdrop behind them. */
-body.shadows-hidden .yt-custom-controls{
-  background: none;
-}
-.yt-frame:hover .yt-custom-controls,
-.yt-custom-controls.active{
-  opacity: 1;
-}
-/* Shades auto-hide mode (its own toggle button, .yt-autohide-toggle):
-   the bar's plain hover-reveal above still exists for every OTHER
-   video, unchanged -- this only overrides it for a frame that's opted
-   in, and only while actually resting (see the JS-driven .active
-   class in app.js's own mousemove/timer logic for what puts it back).
-   Equal specificity to the hover rule above, later in source, so it
-   wins for a hover+shades-autohide frame; .active is one class more
-   specific again, so IT always wins over this, regardless of order. */
-.yt-frame.shades-autohide .yt-custom-controls{
-  opacity: 0;
-}
-.yt-frame.shades-autohide .yt-custom-controls.active{
-  opacity: 1;
-}
-/* Site-wide "hide UI" (body.chrome-hidden) never touched this bar at
-   all before -- confirmed live: the wordmark/counter/rail/text panel
-   all correctly hid under idle/always/manual mode, but every video's
-   own control bar stayed put regardless of which mode was active.
-   !important so it wins over every rule above (hover-reveal,
-   shades-autohide, .active) regardless of what state those are in.
-   pointer-events deliberately left at its own default (auto) rather
-   than also forced none here -- it needs to stay genuinely hoverable
-   even while invisible, so resting on it still counts as "the playback
-   slider" for pauseAutoHideForHover's temporary reveal (this app.js
-   own comment) in "always" mode, which has no other way back to it. */
-body.chrome-hidden .yt-custom-controls{
-  opacity: 0 !important;
-}
-.yt-icon-btn{
-  flex: none;
-  width: 28px;
-  height: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--accent-dim);
-  border-radius: 50%;
-  background: rgba(0,176,255,0.1);
-  color: var(--accent);
-  cursor: pointer;
-  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
-}
-.yt-icon-btn:hover{
-  background: rgba(0,176,255,0.22);
-  border-color: var(--accent);
-}
-.yt-icon-btn[aria-pressed="true"]{
-  background: var(--accent);
-  color: var(--panel);
-}
-.yt-icon-btn svg{ width: 14px; height: 14px; fill: currentColor; }
-.yt-cc-toggle{ font: 700 11px/1 var(--font-body); letter-spacing: 0.02em; }
-.yt-seek-track{
-  position: relative;
-  flex: 1;
-  height: 4px;
-  border-radius: 2px;
-  background: rgba(255,255,255,0.15);
-  cursor: pointer;
-}
-.yt-seek-fill{
-  position: absolute;
-  top: 0; left: 0; bottom: 0;
-  width: 0%;
-  border-radius: 2px;
-  background: var(--accent);
-  pointer-events: none;
-}
-.yt-seek-handle{
-  position: absolute;
-  top: 50%;
-  left: 0%;
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 6px rgba(0,176,255,0.6);
-  transform: translate(-50%, -50%);
-  pointer-events: none;
-}
+/* A click-catcher overlay (stopping a direct iframe click from
+   triggering YouTube's own native play/pause flash under controls:0)
+   plus a whole custom control bar (play/pause, seek track, CC toggle,
+   its own shades-auto-hide toggle) used to live here. Removed in favor
+   of YouTube's own native bar (controls:1 in app.js's playerVars) --
+   matching how sites like TED embed theirs. See git history if it's
+   worth revisiting. */
 
 .event-media::after{
   content: "";
@@ -942,23 +828,21 @@ body.chrome-hidden .event.active .event-body{
      why keeping it on the exit side specifically was the actual source
      of the overlap corruption. */
 }
-/* pointer-events:auto plus width:fit-content on each of these four
-   (event-tags gets the same treatment just below) -- .event-body
-   itself is deliberately pointer-events:none (see its own comment: an
-   oversized invisible box otherwise ate hover/click meant for the
-   video controls underneath). These four are block-level and would
+/* width:fit-content on each of these five (event-tags included) --
+   .event-body itself is deliberately pointer-events:none (see its own
+   comment: an oversized invisible box otherwise ate hover/click meant
+   for the video controls underneath). These are block-level and would
    otherwise stretch to fill that same oversized container width even
    though the visible text is much narrower -- fit-content shrinks the
-   actual HOVERABLE box down to just the text/border it renders,
-   opting back into pointer-events (needed for the auto-hide pause on
-   hover below) without reintroducing that original bug. */
+   box down to just the text/border it renders, so the pointer-events
+   opt-in below (needed for the auto-hide pause on hover) only ever
+   covers the actual visible text, never the empty space beside it. */
 .event-index{
   font-family: var(--font-display);
   font-size: 12px;
   letter-spacing: 0.2em;
   color: var(--accent);
   margin: 0 0 10px;
-  pointer-events: auto;
   width: fit-content;
 }
 
@@ -969,7 +853,6 @@ body.chrome-hidden .event.active .event-body{
   color: var(--ink-dim);
   text-transform: uppercase;
   margin: 0 0 14px;
-  pointer-events: auto;
   width: fit-content;
 }
 
@@ -981,7 +864,6 @@ body.chrome-hidden .event.active .event-body{
   color: var(--ink);
   margin: 0 0 18px;
   max-width: 22ch;
-  pointer-events: auto;
   width: fit-content;
 }
 .event-quote::before{ content: "“"; color: var(--accent); }
@@ -997,21 +879,42 @@ body.chrome-hidden .event.active .event-body{
   margin: 0 0 18px;
   border-left: 3px solid var(--accent);
   padding-left: 14px;
-  pointer-events: auto;
   width: fit-content;
 }
 
 .event-tags{
   display: flex;
   flex-wrap: wrap;
-  pointer-events: auto;
   width: fit-content;
   gap: 10px;
 }
-.tag-chip{
-  /* .event-body (the ancestor) is pointer-events:none -- this opts the
-     actual interactive chips back in specifically. */
+/* pointer-events:auto scoped to the ACTIVE card only -- a real,
+   confirmed bug otherwise: every one of these five elements exists once
+   per event (131 of them), all sharing the exact same fixed bottom-left
+   position (see .event-body), and .event-body's own box only actually
+   reaches wherever ITS OWN text/tags render. Where the active card's
+   content happens to be shorter/narrower than another (inactive) card's
+   at that same screen position, hit-testing fell through PAST the
+   active card's z-index:3 (nothing of its own occupies that pixel) to
+   whatever inactive card's identically-positioned, unconditionally-
+   clickable content was sitting underneath at z-index:1 -- confirmed
+   live as an invisible tag-chip belonging to a completely different,
+   inactive event, clickable in the empty space beside the active card's
+   own shorter tag row. Scoping to .event.active closes that: an
+   inactive card's tags/text fall back to the plain pointer-events:none
+   inherited from .event-body, same as everything else about it. */
+.event.active .event-index,
+.event.active .event-date,
+.event.active .event-quote,
+.event.active .event-name,
+.event.active .event-tags,
+.event.active .tag-chip{
   pointer-events: auto;
+}
+.tag-chip{
+  /* pointer-events:auto lives on .event.active .tag-chip above, not here
+     -- see that rule's own comment for why every OTHER (inactive) card's
+     chips need to actually stay unclickable. */
   font-family: var(--font-display);
   font-size: 12px;
   letter-spacing: 0.1em;

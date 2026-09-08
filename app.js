@@ -284,34 +284,20 @@
   // at all -- deliberately separate from pauseCurrentlyPlaying, which
   // NULLS the reference (correct for "something else took over" or
   // "scrolled off-screen," where the video genuinely stops being
-  // relevant). A user-initiated pause (this button, or Space) is not
-  // that: the video is still the one on screen, just paused, and needs
-  // to stay tracked so a SECOND toggle (resume) has something to act on.
-  // This was a real, confirmed bug: the button and Space used to call
-  // pauseCurrentlyPlaying() directly, which cleared currentlyPlaying on
-  // the very first pause -- the very next Space press then found nothing
-  // tracked, silently skipped all handling, and fell through to the
-  // browser's native "scroll down" default, reading as "Space doesn't
-  // pause, it jumps to the next slide" (exactly as reported).
+  // relevant). A user-initiated pause (Space) is not that: the video is
+  // still the one on screen, just paused, and needs to stay tracked so a
+  // SECOND toggle (resume) has something to act on. This was a real,
+  // confirmed bug: Space used to call pauseCurrentlyPlaying() directly,
+  // which cleared currentlyPlaying on the very first pause -- the very
+  // next Space press then found nothing tracked, silently skipped all
+  // handling, and fell through to the browser's native "scroll down"
+  // default, reading as "Space doesn't pause, it jumps to the next
+  // slide" (exactly as reported).
   function toggleEntry(entry) {
     if (!entry) return;
     const state = entry.player.getPlayerState();
-    if (state === 1) {
-      entry.player.pauseVideo();
-      updatePlayPauseIcon(entry.controls, 2); // optimistic -- see its own comment below
-    } else {
-      entry.player.playVideo();
-      // Resuming can briefly pass through BUFFERING before the real
-      // PLAYING state change event actually fires -- confirmed live as a
-      // small but noticeable delay before the icon updated, since it was
-      // only ever driven by that async confirmation. Pausing never has
-      // an equivalent stall (nothing to buffer), so only this direction
-      // read as laggy. Flipping the icon immediately, optimistically,
-      // fixes both: the later real onStateChange (PLAYING) just confirms
-      // what's already showing, a no-op rather than the thing doing the
-      // work.
-      updatePlayPauseIcon(entry.controls, 1);
-    }
+    if (state === 1) entry.player.pauseVideo();
+    else entry.player.playVideo();
   }
   // Watches the .event SECTION (normal document flow, real scroll-based
   // geometry) rather than any position:fixed video layer itself, same
@@ -392,9 +378,11 @@
     const on = chromeMode !== "manual" || document.body.classList.contains("chrome-hidden");
     chromeToggleBtn.setAttribute("aria-pressed", String(on));
     chromeToggleBtn.setAttribute("aria-label", on ? "Show site UI" : "Hide site UI");
-    // classList, not the `hidden` property -- see updatePlayPauseIcon's
-    // own comment for why: SVGSVGElement doesn't reflect that property to
-    // the real attribute, a real bug already hit once this session.
+    // classList, not the `hidden` property -- SVGSVGElement's `.hidden`
+    // IDL property doesn't reflect to the real hidden CONTENT ATTRIBUTE
+    // the way it does on ordinary HTML elements (confirmed live: leaves
+    // hasAttribute('hidden') false), a real bug already hit once this
+    // session. classList works identically on every element type.
     chromeIconEye.classList.toggle("icon-hidden", on);
     chromeIconEyeOff.classList.toggle("icon-hidden", !on);
   }
@@ -755,132 +743,15 @@
   // worse than just eating YouTube's one native icon flash. See
   // git history if it's worth revisiting.
 
-  // The click-catcher: a transparent layer covering the WHOLE frame,
-  // sitting above the raw iframe but below the controls bar in stacking
-  // order. Without it, only the bottom controls bar is ours -- the rest
-  // of the frame is a direct, unobstructed click target on the actual
-  // YouTube iframe underneath, and YouTube's player responds to a direct
-  // click (even with playerVars.controls:0) with its own native
-  // play/pause toggle AND the big center icon flash, plus other native
-  // overlays (cards/annotations) that controls:0 doesn't suppress either.
-  // This intercepts every click before it can ever reach the iframe, so
-  // none of that native chrome ever has a chance to appear -- confirmed
-  // live as the actual source of the center icon (see caller).
-  function buildClickCatcher(holder) {
-    const catcher = document.createElement("div");
-    catcher.className = "yt-click-catcher";
-    holder.appendChild(catcher);
-    return catcher;
-  }
-
-  function buildCustomControls(holder) {
-    const bar = document.createElement("div");
-    bar.className = "yt-custom-controls";
-    bar.innerHTML = `
-      <button class="yt-icon-btn yt-playpause" type="button" aria-label="Play or pause">
-        <svg class="icon-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-        <svg class="icon-pause icon-hidden" viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>
-      </button>
-      <div class="yt-seek-track">
-        <div class="yt-seek-fill"></div>
-        <div class="yt-seek-handle"></div>
-      </div>
-      <button class="yt-icon-btn yt-cc-toggle" type="button" aria-label="Toggle captions" aria-pressed="false">CC</button>
-      <button class="yt-icon-btn yt-autohide-toggle" type="button" aria-label="Auto-hide controls while resting" aria-pressed="false">
-        <svg viewBox="0 0 24 24"><path d="M12 5c-5 0-9.27 3.11-11 7 1.73 3.89 6 7 11 7s9.27-3.11 11-7c-1.73-3.89-6-7-11-7zm0 11.5A4.5 4.5 0 1 1 12 7.5a4.5 4.5 0 0 1 0 9zm0-7.2A2.7 2.7 0 1 0 12 14.8a2.7 2.7 0 0 0 0-5.5z"/></svg>
-      </button>
-    `;
-    holder.appendChild(bar);
-    return {
-      bar,
-      playPauseBtn: bar.querySelector(".yt-playpause"),
-      iconPlay: bar.querySelector(".icon-play"),
-      iconPause: bar.querySelector(".icon-pause"),
-      track: bar.querySelector(".yt-seek-track"),
-      fill: bar.querySelector(".yt-seek-fill"),
-      handle: bar.querySelector(".yt-seek-handle"),
-      ccBtn: bar.querySelector(".yt-cc-toggle"),
-      autoHideBtn: bar.querySelector(".yt-autohide-toggle"),
-    };
-  }
-
-  // Wires the seek track to real pointer drag (mouse + touch, via pointer
-  // events) rather than just click-to-seek, so scrubbing feels like a
-  // real player. While dragging, the progress-poll loop below is told to
-  // back off (via the returned isDragging() check) so it can't fight the
-  // handle's position mid-drag.
-  function wireSeekTrack(controls, player) {
-    let dragging = false;
-    function ratioFromEvent(e) {
-      const rect = controls.track.getBoundingClientRect();
-      const x = Math.min(Math.max(e.clientX - rect.left, 0), rect.width);
-      return rect.width > 0 ? x / rect.width : 0;
-    }
-    function setVisual(ratio) {
-      controls.fill.style.width = `${ratio * 100}%`;
-      controls.handle.style.left = `${ratio * 100}%`;
-    }
-    controls.track.addEventListener("pointerdown", (e) => {
-      dragging = true;
-      controls.track.setPointerCapture(e.pointerId);
-      setVisual(ratioFromEvent(e));
-    });
-    controls.track.addEventListener("pointermove", (e) => {
-      if (!dragging) return;
-      setVisual(ratioFromEvent(e));
-    });
-    function commitSeek(e) {
-      if (!dragging) return;
-      dragging = false;
-      const duration = player.getDuration();
-      if (duration > 0) player.seekTo(ratioFromEvent(e) * duration, true);
-    }
-    controls.track.addEventListener("pointerup", commitSeek);
-    controls.track.addEventListener("pointercancel", () => {
-      dragging = false;
-    });
-    return { isDragging: () => dragging };
-  }
-
-  // Polls getCurrentTime()/getDuration() rather than relying on
-  // onStateChange alone -- YouTube's player doesn't fire a continuous
-  // "time update" event the way a native <video> does, so a short
-  // interval is the standard way to keep a custom seek bar's fill
-  // visually in sync with real playback.
-  //
-  // ONE shared interval for the whole page, not one per mounted player.
-  // With every PV on the site now getting a custom player (100+
-  // potential mounts over a long scroll), a per-player setInterval left
-  // running forever after each mount would keep compounding for the rest
-  // of the session. Only one video can ever be playing at a time anyway
-  // (see currentlyPlaying above), so only one entry's UI ever needs
-  // updating at once -- this just points at whichever that is.
-  let activeProgressUI = null; // { controls, player, dragState } or null
-  setInterval(() => {
-    if (!activeProgressUI) return;
-    const { controls, player, dragState } = activeProgressUI;
-    if (dragState.isDragging()) return;
-    const duration = player.getDuration();
-    if (!duration) return;
-    const ratio = player.getCurrentTime() / duration;
-    controls.fill.style.width = `${ratio * 100}%`;
-    controls.handle.style.left = `${ratio * 100}%`;
-  }, 250);
-
-  function updatePlayPauseIcon(controls, playerState) {
-    const playing = playerState === 1; // YT.PlayerState.PLAYING
-    // classList, not the `hidden` property -- a real, confirmed bug
-    // otherwise: SVGSVGElement's `.hidden` IDL property doesn't reflect
-    // to the actual hidden CONTENT ATTRIBUTE the way it does on ordinary
-    // HTML elements (confirmed live: svg.hidden = true left
-    // hasAttribute('hidden') false), so neither icon ever actually
-    // toggled -- both just sat at whatever display their own CSS gave
-    // them by default, rendering stacked on top of each other instead of
-    // swapping. classList works identically on every element type,
-    // SVG included.
-    controls.iconPlay.classList.toggle("icon-hidden", playing);
-    controls.iconPause.classList.toggle("icon-hidden", !playing);
-  }
+  // A whole custom control bar (play/pause, seek track, CC toggle, its
+  // own shades-auto-hide toggle) plus a click-catcher overlay (to stop a
+  // direct iframe click from triggering YouTube's own native play/pause
+  // flash under playerVars.controls:0) used to live here. Removed per
+  // explicit request in favor of YouTube's own native bar (controls:1
+  // below) -- matching how sites like TED embed theirs, and getting
+  // idle-fade, captions, quality selection, and scrubbing for free
+  // instead of reimplementing each. See git history if it's worth
+  // revisiting.
 
   // ---- "burn" reveal: static image -> video, via an organic noise mask ----
   // Disabled for now (the call site in mountCustomPlayer's onReady is
@@ -1156,7 +1027,6 @@
     const qIdx = mountedQueue.indexOf(entry);
     if (qIdx !== -1) mountedQueue.splice(qIdx, 1);
     if (currentlyPlaying === entry) currentlyPlaying = null;
-    if (activeProgressUI && activeProgressUI.player === entry.player) activeProgressUI = null;
     const pIdx = customPlayers.indexOf(entry.player);
     if (pIdx !== -1) customPlayers.splice(pIdx, 1);
     entry.player.destroy(); // YT.Player's own teardown -- removes its iframe
@@ -1300,80 +1170,12 @@
 
     const playerEl = document.createElement("div");
     holder.appendChild(playerEl);
-    const clickCatcher = buildClickCatcher(holder);
-    const controls = buildCustomControls(holder);
     // "the playback slider" -- see pauseAutoHideForHover's own comment.
-    // The whole bar, not just the seek track, so resting on the
-    // play/pause or CC buttons counts too.
-    controls.bar.addEventListener("mouseenter", pauseAutoHideForHover);
-    controls.bar.addEventListener("mouseleave", resumeAutoHideAfterHover);
-    function togglePlayPause() {
-      const state = player.getPlayerState();
-      if (state === 1) {
-        player.pauseVideo();
-        updatePlayPauseIcon(controls, 2);
-      } else {
-        // Optimistic, not waiting for the real onStateChange confirmation
-        // -- see toggleEntry's own comment (app.js) for why resuming
-        // specifically (not pausing) had a small but real, confirmed
-        // delay otherwise: a brief BUFFERING pass before the actual
-        // PLAYING event fires.
-        player.playVideo();
-        updatePlayPauseIcon(controls, 1);
-      }
-    }
-    controls.playPauseBtn.addEventListener("click", togglePlayPause);
-    clickCatcher.addEventListener("click", togglePlayPause);
-
-    // ---- shades auto-hide: fades the whole control bar back out after
-    // the mouse rests on the frame for 2s, even while still hovering --
-    // opt-in via its own button, since the DEFAULT (this off) is the
-    // plain hover-reveal every other control already uses. Also driven
-    // by captions being on (see the CC toggle below): the bar re-hides
-    // itself the same way once captions are showing, so it doesn't sit
-    // on top of the caption text -- reusing this same timer/class rather
-    // than a separate mechanism, so hovering to reach the CC button
-    // again (to turn captions back off) still works exactly the same
-    // way.
-    let shadesAutoHide = false;
-    let captionsOn = false;
-    let shadesHideTimer = null;
-    function showShadesTemporarily() {
-      controls.bar.classList.add("active");
-      clearTimeout(shadesHideTimer);
-      shadesHideTimer = setTimeout(() => controls.bar.classList.remove("active"), 2000);
-    }
-    holder.addEventListener("mousemove", () => {
-      if (shadesAutoHide || captionsOn) showShadesTemporarily();
-    });
-    controls.autoHideBtn.addEventListener("click", () => {
-      shadesAutoHide = !shadesAutoHide;
-      controls.autoHideBtn.setAttribute("aria-pressed", String(shadesAutoHide));
-      holder.classList.toggle("shades-autohide", shadesAutoHide || captionsOn);
-      if (shadesAutoHide) showShadesTemporarily();
-      else if (!captionsOn) {
-        clearTimeout(shadesHideTimer);
-        controls.bar.classList.remove("active");
-      }
-    });
-
-    // ---- captions ----
-    // loadModule/setOption/unloadModule are the YouTube IFrame API's own
-    // (lightly documented, but real) module-based captions controls --
-    // cc_load_policy as a playerVar only sets the INITIAL default, this
-    // is what actually toggles them live from a click.
-    controls.ccBtn.addEventListener("click", () => {
-      captionsOn = !captionsOn;
-      controls.ccBtn.setAttribute("aria-pressed", String(captionsOn));
-      if (captionsOn) {
-        player.loadModule("captions");
-        player.setOption("captions", "track", {});
-        showShadesTemporarily();
-      } else {
-        player.unloadModule("captions");
-      }
-      holder.classList.toggle("shades-autohide", shadesAutoHide || captionsOn);
-    });
+    // Attached to the whole frame, not just a bottom strip: YouTube's own
+    // native bar (controls:1 below) can surface anywhere the mouse rests
+    // over the iframe, not just at a fixed position we control.
+    holder.addEventListener("mouseenter", pauseAutoHideForHover);
+    holder.addEventListener("mouseleave", resumeAutoHideAfterHover);
 
     const player = new YT.Player(playerEl, {
       videoId: ytId,
@@ -1395,11 +1197,18 @@
         // back to the start first) and sets the real mute state once the
         // card is genuinely active.
         autoplay: 1,
-        controls: 0,
+        controls: 1,
         mute: 1,
         rel: 0,
         modestbranding: 1,
         playsinline: 1,
+        // Still disabled even with the native bar now visible: focusing
+        // the iframe (e.g. clicking its own play button) would otherwise
+        // let YouTube's OWN keyboard handling intercept Space/arrows --
+        // keyboard events that land inside a focused iframe never reach
+        // the page's own window listener at all, which would silently
+        // break the existing Space-to-toggle feature (see toggleEntry)
+        // the instant a viewer touched the native controls directly.
         disablekb: 1,
         start: ytStart ? Number(ytStart) : undefined,
       },
@@ -1432,32 +1241,17 @@
           }
         },
         onStateChange: (e) => {
-          // Real, confirmed bug otherwise: only PLAYING(1)/PAUSED(2) mean
-          // anything for this icon -- calling this for EVERY state
-          // change meant a resume's real event sequence (which can pass
-          // through BUFFERING(3) before actually reaching PLAYING) fired
-          // this with state 3 in between, and since only exactly 1 counts
-          // as "playing," that briefly flipped the icon back to paused-
-          // looking, undoing the optimistic update from toggleEntry/
-          // togglePlayPause and UN-fixing the exact delay those exist to
-          // fix -- confirmed live as a visible flicker (block -> none ->
-          // block) rather than a clean, single instant swap.
-          if (e.data === 1 || e.data === 2) updatePlayPauseIcon(controls, e.data);
-          if (e.data === 1) { // PLAYING
-            setCurrentlyPlaying(entry);
-            activeProgressUI = { controls, player, dragState };
-          }
+          if (e.data === 1) setCurrentlyPlaying(entry); // PLAYING
         },
       },
     });
     const entry = {
-      holder, player, controls,
+      holder, player,
       pause: () => player.pauseVideo(),
       ready: false, activated: false, revealStarted: false,
     };
     entryByHolder.set(holder, entry);
     customPlayers.push(player);
-    const dragState = wireSeekTrack(controls, player);
     mountedQueue.push(entry);
     enforceMountCap();
     // Checks the LIVE flag, not just the activateImmediately parameter
