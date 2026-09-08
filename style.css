@@ -8,6 +8,15 @@
   --line: rgba(255,255,255,0.12);
   --font-display: 'Oswald', 'Rajdhani', sans-serif;
   --font-body: 'Rajdhani', 'Segoe UI', sans-serif;
+  /* Clearance kept between our own UI and YouTube's native overlay
+     (controls:1 in app.js) -- we can't measure where YouTube actually
+     draws its own icons/bar (cross-origin iframe, invisible to our own
+     JS/CSS), so this is a deliberate, fixed guess at its usual
+     footprint rather than anything measured live. Named here, in one
+     place, so it's a single number to retune if a particular video's
+     YouTube chrome still crowds ours. */
+  --yt-top-clear: 28px;
+  --yt-bottom-clear: 110px;
 }
 
 *{ box-sizing: border-box; }
@@ -154,6 +163,12 @@ body.chrome-hidden .topbar-right:hover #sound-toggle{
      register at all, rather than only the pixel-precise hit-box of
      whichever single button happens to already be visible. */
   pointer-events: auto;
+  /* Nudged down clear of YouTube's own top-right icon row (see
+     --yt-top-clear's own comment) -- align-self, not a plain margin-top,
+     since #top-bar's align-items:center would otherwise just re-center
+     this against .topbar-left and cancel the offset back out. */
+  align-self: flex-start;
+  margin-top: var(--yt-top-clear);
 }
 /* Hover-revealed mode picker for #chrome-toggle: the button itself keeps
    its own plain instant click-toggle (unchanged), this is purely an
@@ -779,7 +794,7 @@ body.shadows-hidden .event-media::after{
   bottom: 0;
   z-index: 1;
   width: 100%;
-  padding: 0 8vw 64px;
+  padding: 0 8vw var(--yt-bottom-clear);
   max-width: 980px;
   opacity: 0;
   transform: translateY(28px);
@@ -1039,7 +1054,7 @@ button.tag-chip:hover{
 }
 
 @media (max-width: 720px){
-  .event-body{ padding: 0 6vw 44px; }
+  .event-body{ padding: 0 6vw 80px; }
   #top-bar{ padding: 14px 16px; }
   #top-bar .wordmark{ font-size: 13px; }
 }
