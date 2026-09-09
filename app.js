@@ -758,38 +758,18 @@
   // bar (papering over native's own bar going partially off-screen on a
   // narrow window) lived here after that, in turn removed now that
   // .yt-frame iframe fits by contain instead of cropping -- native's own
-  // bar can no longer go off-screen in the first place. See git history
-  // for either full version.
+  // bar can no longer go off-screen in the first place. A rotate-to-
+  // landscape button lived here after THAT -- removed too, both because
+  // a phone that actually needs it already has a real, built-in way to
+  // rotate (no button required), and because it rode along into
+  // fullscreen when clicked (a sibling of the iframe within the SAME
+  // .yt-frame that requestFullscreen() targeted), sitting there uselessly
+  // once nothing was left for it to do. See git history for any of the
+  // three full versions.
   //
   // What's left for a narrow/portrait window: contain-fit already shows
-  // the complete, fully-interactive video (letterboxed, not cropped), so
-  // nothing is actually BROKEN there -- this button is a convenience
-  // offer, not a fix. Best-effort only, deliberately not reported back
-  // to the user either way: iOS Safari doesn't implement the Orientation
-  // Lock API at all, and Chrome/Android only allows locking while the
-  // requested element is actually in fullscreen, so this fails silently
-  // on a real chunk of browsers no matter what. Locking the FRAME (not
-  // the whole page) into fullscreen first, rather than the document, so
-  // the site's own chrome doesn't come along for the ride.
-  function buildRotateHint(holder) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "yt-rotate-hint";
-    btn.setAttribute("aria-label", "Rotate to landscape");
-    btn.innerHTML = `<svg viewBox="0 0 24 24"><path d="M7 4h8a2 2 0 0 1 2 2v3h-2V6H7v12h5v2H7a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><path d="M17.65 13.35A5.5 5.5 0 0 1 13 19v-2a3.5 3.5 0 0 0 2.94-5.4L14 13.5V9h4.5l-1.85 1.85c.63.72 1 1.63 1 2.65z"/></svg>`;
-    btn.addEventListener("click", async () => {
-      try {
-        if (holder.requestFullscreen) await holder.requestFullscreen();
-        if (screen.orientation && screen.orientation.lock) {
-          await screen.orientation.lock("landscape");
-        }
-      } catch (e) {
-        // Unsupported or blocked -- see this function's own comment.
-      }
-    });
-    holder.appendChild(btn);
-    return btn;
-  }
+  // the complete, fully-interactive video (letterboxed, not cropped) --
+  // nothing else needed.
 
   // ---- "burn" reveal: static image -> video, via an organic noise mask ----
   // Disabled for now (the call site in mountCustomPlayer's onReady is
@@ -1318,7 +1298,6 @@
         },
       },
     });
-    buildRotateHint(holder);
     const entry = {
       holder, player,
       pause: () => player.pauseVideo(),

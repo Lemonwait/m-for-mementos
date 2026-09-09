@@ -788,38 +788,13 @@ body.chrome-hidden #year-watermark{
    the sides to avoid ever showing a letterbox) lived here after that,
    in turn removed now that the iframe fits by contain instead --
    native's own bar can no longer go off-screen in the first place
-   (see .yt-frame iframe's own comment), so there's nothing left for a
-   fallback to paper over. See git history for either full version. */
-.yt-rotate-hint{
-  display: none;
-  position: absolute;
-  top: 50%; left: 50%;
-  transform: translate(-50%, -50%);
-  z-index: 4;
-  width: 56px; height: 56px;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--accent-dim);
-  border-radius: 50%;
-  background: rgba(5,7,10,0.75);
-  color: var(--accent);
-  cursor: pointer;
-  pointer-events: auto;
-  transition: opacity 0.3s ease;
-}
-.yt-rotate-hint svg{ width: 26px; height: 26px; fill: currentColor; }
-/* Same contain-fit math as .yt-frame iframe -- narrower than 16:9 is
-   exactly when that rule letterboxes (top/bottom bars) instead of
-   filling the frame, so this only ever offers to fix that specific
-   case, never showing on an already-full-bleed wide/pillarboxed
-   window. */
-@media (max-aspect-ratio: 16/9){
-  .yt-rotate-hint{ display: flex; }
-}
-body.chrome-hidden .yt-rotate-hint{
-  opacity: 0;
-  pointer-events: none;
-}
+   (see .yt-frame iframe's own comment). A rotate-to-landscape button
+   lived here after THAT -- removed too: a phone that actually needs it
+   already has a real, built-in way to rotate, and it rode along into
+   fullscreen when clicked (a sibling of the iframe within the same
+   .yt-frame that went fullscreen), sitting there uselessly once nothing
+   was left for it to do. See git history for any of the three full
+   versions. */
 
 .event-media::after{
   content: "";
