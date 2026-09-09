@@ -724,6 +724,21 @@ body.chrome-hidden #year-watermark{
   inset: 0;
   z-index: 2;
   pointer-events: none;
+  /* A real, confirmed bug otherwise: nesting inside .event-media used to
+     gate the video's visibility for free (that element's own opacity:0
+     until .event.active landed on it); this single shared slot has no
+     such thing built in, so without an explicit gate a video mounted
+     the instant it crossed 50% intersection -- WELL before scroll
+     settled on it -- rendered immediately, blinds reveal and all.
+     .showing (app.js's syncVideoSlotVisibility) is that gate. No
+     transition, same reasoning as .event-media's own base rule: a fade
+     leaves a real window where the outgoing and incoming layers are
+     both partially visible, which read as a dark, washed-out flicker
+     during fast scrolling once already fixed here once before. */
+  opacity: 0;
+}
+#video-slot.showing{
+  opacity: 1;
 }
 .yt-frame{
   position: absolute;

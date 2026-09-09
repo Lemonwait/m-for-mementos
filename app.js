@@ -7,6 +7,54 @@
   // .yt-frame gets physically relocated here while mounted, rather than
   // staying nested inside its own .event-media.
   const videoSlot = document.getElementById("video-slot");
+  // A real, confirmed bug otherwise: nesting inside .event-media used to
+  // give the video's visibility for free (opacity:0 until .event.active
+  // landed on its own parent) -- once relocated to this single shared
+  // slot, NOTHING gated it anymore, so a video mounted the instant
+  // activateObserver's raw intersection crossed 0.5, well before the
+  // page agreed this was the settled, current card. Confirmed live: fast
+  // scrolling showed the blinds reveal playing out mid-animation on
+  // cards that were only ever briefly crossed, never actually landed on.
+  //
+  // Gates on activeSection, checked against a short debounce of ITS OWN
+  // -- not currentIdx (scheduleSnap's discrete, wheel-driven "committed"
+  // index), which sounds like the more natural fit but turned out to
+  // have the opposite problem in testing: after a real (not scripted)
+  // wheel scroll, currentIdx's own 125ms debounce measures net movement
+  // via window.scrollY at that deadline, and can read the page's still-
+  // mid-smooth-scroll position and settle on the wrong card -- confirmed
+  // live as activeSection and currentIdx correctly agreeing on Concept
+  // Trailer II while gating on currentIdx alone still reported hidden,
+  // i.e. currentIdx pointed somewhere else briefly even once the visible
+  // card had already genuinely settled. activeSection (updateDisplay's
+  // own plain getBoundingClientRect visibility check on every 'scroll'
+  // event) doesn't share that failure mode, but IS deliberately live/
+  // un-debounced for the art/text layer it actually drives, so it can
+  // just as easily agree with a freshly-mounting card for a single
+  // transient instant mid-fast-scroll. Debouncing the REVEAL specifically
+  // (hide instantly the moment they disagree, but only show again once
+  // they've agreed for a short beat with nothing re-triggering in
+  // between) gets the settle-detection this needs without inheriting
+  // either variable's own failure mode.
+  //
+  // Called from both sides of that gap -- wherever activeSection itself
+  // changes (updateDisplay and the two ending-swipe functions), and
+  // wherever the mounted holder itself changes (mountCustomPlayer,
+  // unmountVideoPlayer) -- since either one moving independently of the
+  // other is exactly the window this bug lived in.
+  let videoRevealTimer = null;
+  function syncVideoSlotVisibility() {
+    clearTimeout(videoRevealTimer);
+    const holder = videoSlot.querySelector(".yt-frame");
+    const owningSection = holder && holder._homeParent && holder._homeParent.closest(".event");
+    if (!owningSection || owningSection !== activeSection) {
+      videoSlot.classList.remove("showing");
+      return;
+    }
+    videoRevealTimer = setTimeout(() => {
+      videoSlot.classList.add("showing");
+    }, 150);
+  }
 
   const total = MEMENTOS.length;
   const years = [...new Set(MEMENTOS.map((m) => m.year))];
@@ -1052,10 +1100,25 @@
     delete entry.holder.dataset.customMounted;
     delete entry.holder._wantsActivate;
     entryByHolder.delete(entry.holder);
+    // A real gap otherwise, found while chasing a "stuck mid-blinds"
+    // report: enforceMountCap's own aggressive eviction (MAX_MOUNTED_
+    // VIDEOS is 0 -- anything that isn't the newest mount or already
+    // playing gets unmounted the instant something newer shows up) can
+    // cut a reveal off mid-animation, well before playBlindsReveal's own
+    // tick() next gets a chance to notice (its dataset.customMounted
+    // check only runs once per animation frame) -- and unlike innerHTML
+    // above, an inline style.mask isn't a CHILD, so clearing this
+    // holder's content did nothing to it. closeBlindsMask resets it to
+    // fully closed, matching the state a never-yet-mounted holder starts
+    // in, so a holder evicted mid-reveal can't carry a stale, half-open
+    // mask value into whatever mounts it next -- mountCustomPlayer
+    // already does the same reset on its own side for the same reason.
+    closeBlindsMask(entry.holder);
     // Move the holder back home -- see mountCustomPlayer's own comment
     // for why it left in the first place. Harmless to skip if somehow
     // already home (falsy _homeParent) or mid-relocation elsewhere.
     if (entry.holder._homeParent) entry.holder._homeParent.appendChild(entry.holder);
+    syncVideoSlotVisibility();
   }
 
   function enforceMountCap() {
@@ -1185,6 +1248,7 @@
     // reachable via a plain .closest() from its original spot.
     holder._homeParent = holder._homeParent || holder.parentElement;
     videoSlot.appendChild(holder);
+    syncVideoSlotVisibility();
     // A real, confirmed bug otherwise: dataset.customMounted alone can't
     // tell THIS call apart from a LATER one for the same holder. Speeding
     // down then back up fast enough unmounts a holder (clearing the
@@ -1517,6 +1581,7 @@
       yearWatermarkEl.classList.add("hidden");
       Object.values(yearButtons).forEach((btn) => btn.classList.remove("active"));
       counterEl.textContent = `00 / ${total}`;
+      syncVideoSlotVisibility();
       return;
     }
 
@@ -1525,6 +1590,7 @@
       winner.classList.remove("leaving");
       winner.classList.add("active");
       activeSection = winner;
+      syncVideoSlotVisibility();
     }
     const i = Number(winner.dataset.index);
     const year = Number(winner.dataset.year);
@@ -1575,6 +1641,7 @@
     outroEl.classList.remove("revealed");
     lastEventEl.classList.remove("active", "leaving");
     if (activeSection === lastEventEl) activeSection = null;
+    syncVideoSlotVisibility();
     goTo(0);
     window.scrollTo({ top: 0, behavior: "smooth" });
   });
@@ -1795,6 +1862,7 @@
     lastEventEl.classList.remove("leaving");
     lastEventEl.classList.add("active");
     activeSection = lastEventEl;
+    syncVideoSlotVisibility();
     outroEl.classList.add("revealed");
     // updateDisplay() never runs while the outro is revealed (see its own
     // guard above), and no real scrolling happens for this swipe either
@@ -1831,6 +1899,7 @@
     lastEventEl.classList.remove("leaving");
     lastEventEl.classList.add("active");
     activeSection = lastEventEl;
+    syncVideoSlotVisibility();
     // Same reasoning as revealEnding's counter line: own it explicitly
     // rather than hoping a 'scroll' event will come along and fix it.
     const i = Number(lastEventEl.dataset.index);
@@ -1919,6 +1988,53 @@
     if (endscreenLocked || outroEl.classList.contains("revealed")) return;
     scheduleSnap();
   }, { passive: true });
+
+  // ---- keyboard: the same card-to-card commit, reachable without a
+  // scroll gesture at all ----
+  // A real, confirmed gap otherwise: a genuine cross-origin YouTube
+  // iframe (controls:1 elsewhere in this file) receives wheel/touch
+  // input INTO ITS OWN document the instant the cursor rests over it --
+  // an iframe is a separate browsing context, not just another element
+  // on this page, so it never bubbles out to this page's own "wheel"
+  // listener above no matter what pointer-events says. With the video
+  // now filling most or all of the viewport (the whole point of the
+  // contain-fit work elsewhere in this file), that's most of the
+  // screen, most of the time -- confirmed live as a real "can't scroll
+  // past this card while the cursor's over the video" report. Keyboard
+  // input is dispatched by FOCUS, not cursor position, so this keeps
+  // working regardless of where the mouse happens to be resting.
+  //
+  // Mirrors onWheel's own special-case ordering (swipe lock, outro
+  // revealed, the Kaltsit->ending boundary) rather than just jumping
+  // currentIdx directly, so an arrow key can never desync from what a
+  // real wheel tick would have done in the same spot.
+  function commitCard(direction) {
+    if (endscreenLocked) return;
+    if (outroEl.classList.contains("revealed")) {
+      if (direction < 0) exitEnding();
+      return;
+    }
+    if (currentIdx === kaltsitIdx && direction > 0) {
+      revealEnding();
+      return;
+    }
+    const targetIdx = Math.max(0, Math.min(snapTargets.length - 1, currentIdx + direction));
+    const target = snapTargets[targetIdx];
+    if (target && Math.abs(target.getBoundingClientRect().top) > 4) {
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+    applyState(targetIdx);
+  }
+  window.addEventListener("keydown", (e) => {
+    if (e.code !== "ArrowDown" && e.code !== "ArrowUp" && e.code !== "PageDown" && e.code !== "PageUp") return;
+    // Same "don't steal a focused control's own key handling" guard as
+    // the existing Space listener earlier in this file.
+    const active = document.activeElement;
+    const tag = active?.tagName;
+    if (tag === "BUTTON" || tag === "INPUT" || tag === "TEXTAREA" || active?.isContentEditable) return;
+    e.preventDefault();
+    commitCard(e.code === "ArrowDown" || e.code === "PageDown" ? 1 : -1);
+  });
 
   // ---- keep the current slide stable across viewport-height changes ----
   // Every card is sized with min-height:100vh. A viewport-height change —
