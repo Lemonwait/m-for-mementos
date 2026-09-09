@@ -955,6 +955,23 @@
     const mask = buildBlindsMask(0);
     targetEl.style.mask = mask;
     targetEl.style.webkitMask = mask;
+    // A real, confirmed bug otherwise, reported as "scrolling locks up
+    // the instant the blinds start": this CSS mask is purely visual --
+    // it has no effect whatsoever on hit-testing, so a .yt-frame sitting
+    // behind bars that are 95% still closed is nonetheless a full-
+    // viewport, fully interactive element underneath them the instant
+    // it's mounted, real cross-origin YouTube iframe included once that
+    // finishes loading. Since that iframe swallows wheel input into its
+    // own document rather than letting it reach this page at all (see
+    // the keyboard-nav comment elsewhere in this file for the full
+    // explanation), the lock could start well before there was
+    // anything worth looking at yet, let alone interacting with.
+    // pointer-events:none here, flipped back to auto by playBlindsReveal's
+    // own tick() only once the bars are substantially open, keeps the
+    // page scrollable for most of the reveal's own duration -- turning
+    // interactive right around when the video actually becomes worth
+    // looking at is a reasonable trade, not a compromise.
+    targetEl.style.pointerEvents = "none";
   }
   // Starts the SAME instant mounting begins (called right after
   // closeBlindsMask, before the YouTube API/player even starts loading),
@@ -994,17 +1011,33 @@
   // of the reveal, bars still mostly closed).
   const BLINDS_RISE_CAP = 0.25;
   // Every write to mask-image forces the browser to repaint the whole
-  // card -- fine on its own, but confirmed live: doing that on every
-  // single animation frame (~60/sec) WHILE the real YouTube iframe is
-  // simultaneously doing its own heavy work (its own page load, JS init,
-  // video decode startup) visibly janks, the two competing for
-  // main-thread time right as the reveal is playing. A hard-edged bar
-  // wipe doesn't need 60fps to read as smooth, so the mask is only
-  // actually written at BLINDS_WRITE_INTERVAL instead of every tick --
-  // the underlying progress (and the ready-gate/pause logic above) still
-  // advances every frame, only the expensive part is throttled, so this
-  // doesn't change the reveal's timing or sequencing at all.
-  const BLINDS_WRITE_INTERVAL = 40;
+  // card, so this stays a throttle (not a write on literally every
+  // tick) rather than removing it outright -- but confirmed live, with
+  // an actual requestAnimationFrame timer running alongside a fresh
+  // reveal, that this and 40 measure identically (~18ms average gap
+  // between frames, one startup hitch mounting the iframe, otherwise
+  // clean) -- whatever main-thread contention originally motivated 40
+  // isn't showing up here anymore. 40ms (25fps) was previously reported
+  // as visibly stuttery for what's a moving hard-edge boundary, not a
+  // soft crossfade -- a gap perception is far more sensitive to than a
+  // gradual fade would be; 16 (roughly every frame at 60fps) reads
+  // smooth without measuring any worse. The underlying progress (and
+  // the ready-gate/pause logic above) still advances every frame either
+  // way -- only the write itself was ever throttled, so this doesn't
+  // touch the reveal's actual timing or sequencing.
+  const BLINDS_WRITE_INTERVAL = 16;
+  // How far open the bars need to be before the frame underneath becomes
+  // interactive again -- see closeBlindsMask's own comment for why this
+  // exists at all (a CSS mask has zero effect on hit-testing, so without
+  // this the real iframe underneath is fully clickable/wheel-capturing
+  // from the moment it's mounted, bars or no bars). Deliberately NOT 1
+  // (fully open): waiting for the exact instant the mask finishes would
+  // still leave the tail end of the reveal fully interactive-but-mostly-
+  // still-closed, since BLINDS_WRITE_INTERVAL only throttles how often
+  // the visual is repainted, not this check. 0.85 trades a few percent
+  // of "technically not done yet" for keeping the page scrollable
+  // through nearly the whole reveal instead of just most of it.
+  const BLINDS_INTERACTIVE_THRESHOLD = 0.85;
   function playBlindsReveal(targetEl, durationMs, isReadyFn) {
     // Same real, confirmed race as mountCustomPlayer's own _mountToken
     // (see its comment) -- dataset.customMounted alone only says "SOME
@@ -1024,6 +1057,7 @@
     let pausedSince = null;
     let totalPaused = 0;
     let lastWrite = 0;
+    let interactive = false;
     function tick(now) {
       if (!targetEl.dataset.customMounted || targetEl._mountToken !== myToken) return;
       if (pausedSince !== null) {
@@ -1038,6 +1072,13 @@
       const eased = 1 - Math.pow(1 - p, 3); // ease-out cubic, same feel as the burn reveal
       if (eased >= BLINDS_RISE_CAP && !isReadyFn()) {
         pausedSince = now;
+      }
+      // See BLINDS_INTERACTIVE_THRESHOLD's own comment -- a one-way flip,
+      // not re-checked once true, since eased only ever climbs (or holds
+      // at the ready-gate above) for the life of a single reveal.
+      if (!interactive && eased >= BLINDS_INTERACTIVE_THRESHOLD) {
+        interactive = true;
+        targetEl.style.pointerEvents = "auto";
       }
       if (eased < 1) {
         if (now - lastWrite >= BLINDS_WRITE_INTERVAL) {
