@@ -618,7 +618,11 @@ body.chrome-hidden #year-watermark{
 .digit-roll.rolling{ transform: translateY(-1em); }
 
 /* ---------- event sections ---------- */
-#events{ position: relative; }
+/* A few px of scroll room past the last card: at the very bottom, a
+   forward wheel over that card's video would move nothing, and the page
+   only ever learns about wheels over a video from the scroll they cause
+   (see onScrollFrame in app.js). */
+#events{ position: relative; padding-bottom: 4px; }
 
 .event{
   /* Plain normal-flow section — text scrolls through it like any ordinary
@@ -658,9 +662,28 @@ body.chrome-hidden #year-watermark{
      blends into a dark, washed-out frame during fast scrolling. With the
      outgoing layer gone the instant it deactivates, there's only ever
      ONE partially-transparent layer at a time -- the incoming one below
-     -- fading in alone with nothing to blend with. will-change hints the
-     browser to handle the opacity change on its own layer. */
-  will-change: opacity;
+     -- fading in alone with nothing to blend with. */
+  /* will-change:opacity was REMOVED here, and its removal is a large part
+     of why card changes feel smooth now.
+
+     It applied to all 131 .event-media elements at once, and every one of
+     them is position:fixed;inset:0 -- i.e. full-viewport. will-change is
+     not a hint that expires; it promotes each matching element to its own
+     permanent compositor layer for the lifetime of the page. At 1920x1080
+     one such layer is roughly 8MB of GPU texture, so 131 of them asks for
+     well over a gigabyte. Chrome caps that and starts refusing promotions
+     and evicting layers, so the site paid continuous raster and memory
+     pressure and got no compositing benefit in return -- worst of both.
+
+     It was also pointing at an animation that no longer exists. Both
+     rules here deliberately have NO transition on opacity anymore (see
+     the comments above and on .event.active .event-media): the swap is
+     instant, every pixel in one frame. There was literally no opacity
+     animation left for will-change to prepare a layer for.
+
+     If a fade is ever reintroduced, add will-change from JS on the
+     incoming and outgoing card only, and remove it when the transition
+     ends -- never as a blanket rule over all 131. */
   /* A DIFFERENT dark-screen cause than the one above (that one's about
      two crossfading layers; this is about a card whose image genuinely
      hasn't finished loading yet -- fast scrolling can outrun even the
@@ -669,9 +692,25 @@ body.chrome-hidden #year-watermark{
      soft "still arriving" placeholder instead of a flat, seemingly-
      broken black rectangle. */
   background: radial-gradient(circle at 50% 42%, var(--panel), var(--bg) 72%);
+  /* opacity:0 alone still leaves these 131 layers as live, paintable
+     content the compositor has to account for -- and because each one is
+     position:fixed;inset:0, the browser considers EVERY one of them to be
+     inside the viewport at all times (the exact quirk that forced the
+     IntersectionObserver in app.js to watch .event instead of the img).
+     That means all 131 full-screen images stay resident and rasterizable,
+     not just the handful actually near the scroll position.
+
+     visibility:hidden genuinely takes them out of painting and
+     hit-testing, so the browser can drop the decoded bitmaps for
+     everything except the one card on screen. Free to do here precisely
+     because there's no opacity transition left to break: the swap is
+     already instant in both directions, and visibility flips in the same
+     frame the class does. */
+  visibility: hidden;
 }
 .event.active .event-media{
   opacity: 1;
+  visibility: visible;
   z-index: 1;
   /* No transition here either, per explicit request: every pixel swaps
      in the same instant, all at once -- no partial-opacity frame to ever
@@ -1018,6 +1057,109 @@ button.tag-chip:hover{
   background: var(--accent-dim);
   border-color: var(--accent);
   font-weight: 700;
+}
+
+/* ---------- the reel (zoom-out roulette between cards) ---------- */
+/* Driven by the reel section of app.js. Out of hit-testing entirely, and
+   hidden (not just transparent) at rest, so it costs nothing and can never
+   block the page. Above every page layer, below the top bar and year rail
+   (z-index 100), which stay usable mid-roll. */
+#reel-stage{
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  overflow: hidden;
+  pointer-events: none;
+  visibility: hidden;
+  opacity: 0;
+  background: radial-gradient(ellipse at 50% 50%, #0f141c 0%, var(--bg) 70%);
+}
+#reel-world{
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  transform-style: preserve-3d;
+}
+.reel-card{
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--reel-w);
+  height: var(--reel-h);
+  overflow: hidden;
+  backface-visibility: hidden;
+  background: var(--panel);
+  box-shadow: 0 50px 90px rgba(0,0,0,0.55);
+  outline: 2px solid rgba(255,255,255,0.07);
+}
+.reel-card img{
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.reel-hero{
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at 50% 42%, var(--panel), var(--bg) 72%);
+}
+.reel-hero span{
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 150px;
+  line-height: 1.05;
+  letter-spacing: 0.06em;
+  text-align: center;
+  color: var(--ink);
+}
+/* A window cut out of a dim overlay over the card in the middle of the
+   reel -- the roulette's pointer. Its dim level is set from app.js. */
+#reel-spot{
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 51;
+  pointer-events: none;
+  visibility: hidden;
+  opacity: 0;
+  outline: 1px solid rgba(0,176,255,0.55);
+}
+#reel-hud{
+  position: fixed;
+  left: 50%;
+  bottom: 5vh;
+  transform: translateX(-50%);
+  z-index: 52;
+  pointer-events: none;
+  visibility: hidden;
+  opacity: 0;
+  text-align: center;
+  white-space: nowrap;
+}
+#reel-hud .ry{
+  display: block;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(40px, 7vw, 84px);
+  line-height: 1;
+  letter-spacing: 0.04em;
+  color: rgba(238,242,246,0.14);
+}
+#reel-hud .rl{
+  font-family: var(--font-display);
+  font-size: 12px;
+  letter-spacing: 0.2em;
+  color: var(--accent);
+}
+#reel-hud .rn{
+  font-family: var(--font-display);
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  color: var(--ink);
+  margin-left: 10px;
+  text-transform: uppercase;
 }
 
 /* ---------- outro ---------- */

@@ -1,4 +1,7 @@
 (function () {
+  // The reel keeps its own record of the current card for reloads (see
+  // rememberCard), so the browser's scroll restoration is switched off.
+  if ("scrollRestoration" in history) history.scrollRestoration = "manual";
   const eventsRoot = document.getElementById("events");
   const yearRail = document.getElementById("year-rail");
   const counterEl = document.getElementById("counter");
@@ -71,8 +74,7 @@
       const first = MEMENTOS.find((m) => m.year === year);
       const target = document.getElementById(`event-${first.i}`);
       if (target) {
-        goTo(snapTargets.indexOf(target));
-        target.scrollIntoView({ behavior: "smooth" });
+        reelJumpTo(snapTargets.indexOf(target));
       }
     });
     yearRail.appendChild(btn);
@@ -363,7 +365,7 @@
   // to resume from later. unmountVideoPlayer() already does exactly that
   // (destroy()s the real player and clears the mount flag), and scrolling
   // back to the card re-triggers the normal mount observer below --
-  // static image, then the blinds reveal, then the video, from scratch,
+  // static image, then the video, from scratch,
   // same as a first-ever visit. Unconditional (not gated on this being
   // the currently-playing entry): a card that's merely mounted-but-paused
   // (toggled off before scrolling away) should reset just the same as one
@@ -895,208 +897,25 @@
     requestAnimationFrame(tick);
   }
 
-  // ---- "blinds" reveal: static image -> video, via animated vertical bars ----
-  // PowerPoint's "Blinds" transition, replicated as an original CSS mask
-  // (not a reference to PowerPoint's own closed-source implementation --
-  // just the same generic, decades-old visual idea: vertical bars that
-  // each open from their own center, all in sync). Same underlying trick
-  // as playBurnReveal above -- the video already sits above the still
-  // image in stacking order, so masking only the video's own frame is
-  // enough; the image shows through wherever the mask hasn't opened yet,
-  // and needs no fade of its own. See playBurnReveal's comment for why
-  // that's true.
-  //
-  // Built from BLIND_BARS explicit gradient stops rather than a
-  // repeating-linear-gradient: a repeating gradient's repeat unit is
-  // measured against the actual pixel distance between its first and
-  // last color stop, not the percentages written in the stops themselves
-  // -- at an arbitrary card width that repeats an unpredictable number of
-  // times. Generating every bar's stops directly sidesteps that and stays
-  // exact at any width.
-  const BLIND_BARS = 8;
-  function buildBlindsMask(openFrac) {
-    // Each bar opens from its own center outward, growing to `openFrac`
-    // of that bar's own width -- at openFrac 0 every bar is fully closed
-    // (mask fully transparent, image showing); at 1 every bar's opening
-    // exactly meets its neighbors' (mask fully opaque, video fully
-    // revealed, no seams left behind).
-    const barWidth = 100 / BLIND_BARS;
-    const gap = barWidth * openFrac;
-    const stops = [];
-    for (let i = 0; i < BLIND_BARS; i++) {
-      const barStart = i * barWidth;
-      const center = barStart + barWidth / 2;
-      const openStart = center - gap / 2;
-      const openEnd = center + gap / 2;
-      stops.push(
-        `transparent ${barStart}%`,
-        `transparent ${openStart}%`,
-        `black ${openStart}%`,
-        `black ${openEnd}%`,
-        `transparent ${openEnd}%`,
-        `transparent ${barStart + barWidth}%`
-      );
-    }
-    return `linear-gradient(to right, ${stops.join(", ")})`;
+  // ---- video frame: static image -> video, instant swap ----
+  // Hidden from before its iframe exists until YouTube is actually PLAYING
+  // (see revealEntry): until then it only has black unstarted/buffering
+  // frames to show -- measured ~0.5s of them after onReady. Opacity rather
+  // than visibility:hidden, so the iframe is still a rendered, on-screen
+  // frame while it loads.
+  function hideVideoFrame(el) {
+    el.style.opacity = "0";
+    el.style.pointerEvents = "none";
   }
-  // Split from playBlindsReveal so the FULLY CLOSED mask (openFrac 0) can
-  // be applied synchronously the moment a holder starts mounting a player
-  // -- confirmed live bug otherwise: the raw YouTube iframe is inserted
-  // into the DOM as soon as `new YT.Player()` runs, well before onReady
-  // fires, and a real (if brief) gap sits between those two moments where
-  // the iframe can render on its own -- unmasked, at full opacity, above
-  // the still image -- before playBlindsReveal ever got called from
-  // onReady and set a mask for the first time. Reported as "an unknown
-  // youtube infiltration" flickering in before the blinds even start.
-  // Pre-closing the mask before the iframe exists at all means there's
-  // never a frame where it can render unmasked, no matter how that gap
-  // behaves on a given connection.
-  function closeBlindsMask(targetEl) {
-    const mask = buildBlindsMask(0);
-    targetEl.style.mask = mask;
-    targetEl.style.webkitMask = mask;
-    // A real, confirmed bug otherwise, reported as "scrolling locks up
-    // the instant the blinds start": this CSS mask is purely visual --
-    // it has no effect whatsoever on hit-testing, so a .yt-frame sitting
-    // behind bars that are 95% still closed is nonetheless a full-
-    // viewport, fully interactive element underneath them the instant
-    // it's mounted, real cross-origin YouTube iframe included once that
-    // finishes loading. Since that iframe swallows wheel input into its
-    // own document rather than letting it reach this page at all (see
-    // the keyboard-nav comment elsewhere in this file for the full
-    // explanation), the lock could start well before there was
-    // anything worth looking at yet, let alone interacting with.
-    // pointer-events:none here, flipped back to auto by playBlindsReveal's
-    // own tick() only once the bars are substantially open, keeps the
-    // page scrollable for most of the reveal's own duration -- turning
-    // interactive right around when the video actually becomes worth
-    // looking at is a reasonable trade, not a compromise.
-    targetEl.style.pointerEvents = "none";
-  }
-  // Starts the SAME instant mounting begins (called right after
-  // closeBlindsMask, before the YouTube API/player even starts loading),
-  // per explicit request -- previously this only started in onReady,
-  // i.e. after the video had already finished loading, so the whole load
-  // gap sat there as a static, unchanging image with nothing visibly
-  // happening. Now the reveal itself starts immediately, in parallel with
-  // the real (network-time, unpredictable) load.
-  //
-  // The obvious risk: if the bars fully open before the video is actually
-  // ready, the gaps reveal a still-blank/loading iframe instead of real
-  // video -- a different, worse flicker than the one this was meant to
-  // fix. RISE_CAP prevents that: the eased curve is free to run all the
-  // way to 1 if `isReadyFn()` is already true by the time it gets there
-  // (the common case -- API already cached from an earlier video, load is
-  // fast), but if it's NOT ready yet, progress freezes at RISE_CAP and
-  // simply holds (still clearly "opening," just not finished) until
-  // isReadyFn() flips true, at which point the SAME eased curve resumes
-  // from exactly where it froze (totalPaused shifts the clock so the
-  // frozen duration is excluded, not counted as elapsed time) -- a
-  // continuous curve, not a restart or a jump.
-  //
-  // Also the reason this checks targetEl.dataset.customMounted every
-  // tick: a card can now be scrolled away and reset (see
-  // observeVideoVisibility) before its video ever becomes ready, which
-  // clears that flag -- without this check, a reveal frozen at RISE_CAP
-  // waiting on a ready signal that will now never come would loop via
-  // requestAnimationFrame forever.
-  // Held well short of fully open (not just short) -- confirmed live
-  // cause of an intermittent flicker: when a video ISN'T preloaded in
-  // time, this is where the reveal sits waiting for it, and playVideo()
-  // (called the instant it's ready, from engagePlayer) triggers YouTube's
-  // own native icon flash right at that moment -- at 0.92 that flash was
-  // happening through bars already 92% open, in plain view. At 0.25 the
-  // same flash happens through much narrower gaps, closer to how it
-  // looked pre-preload (when playVideo() always fired at the very start
-  // of the reveal, bars still mostly closed).
-  const BLINDS_RISE_CAP = 0.25;
-  // Every write to mask-image forces the browser to repaint the whole
-  // card, so this stays a throttle (not a write on literally every
-  // tick) rather than removing it outright -- but confirmed live, with
-  // an actual requestAnimationFrame timer running alongside a fresh
-  // reveal, that this and 40 measure identically (~18ms average gap
-  // between frames, one startup hitch mounting the iframe, otherwise
-  // clean) -- whatever main-thread contention originally motivated 40
-  // isn't showing up here anymore. 40ms (25fps) was previously reported
-  // as visibly stuttery for what's a moving hard-edge boundary, not a
-  // soft crossfade -- a gap perception is far more sensitive to than a
-  // gradual fade would be; 16 (roughly every frame at 60fps) reads
-  // smooth without measuring any worse. The underlying progress (and
-  // the ready-gate/pause logic above) still advances every frame either
-  // way -- only the write itself was ever throttled, so this doesn't
-  // touch the reveal's actual timing or sequencing.
-  const BLINDS_WRITE_INTERVAL = 16;
-  // How far open the bars need to be before the frame underneath becomes
-  // interactive again -- see closeBlindsMask's own comment for why this
-  // exists at all (a CSS mask has zero effect on hit-testing, so without
-  // this the real iframe underneath is fully clickable/wheel-capturing
-  // from the moment it's mounted, bars or no bars). Deliberately NOT 1
-  // (fully open): waiting for the exact instant the mask finishes would
-  // still leave the tail end of the reveal fully interactive-but-mostly-
-  // still-closed, since BLINDS_WRITE_INTERVAL only throttles how often
-  // the visual is repainted, not this check. 0.85 trades a few percent
-  // of "technically not done yet" for keeping the page scrollable
-  // through nearly the whole reveal instead of just most of it.
-  const BLINDS_INTERACTIVE_THRESHOLD = 0.85;
-  function playBlindsReveal(targetEl, durationMs, isReadyFn) {
-    // Same real, confirmed race as mountCustomPlayer's own _mountToken
-    // (see its comment) -- dataset.customMounted alone only says "SOME
-    // mount is active for this holder," not "the mount THIS reveal
-    // belongs to still is." Fast scrolling can unmount and remount the
-    // same holder before this reveal's rAF loop ever notices the gap:
-    // dataset.customMounted reads truthy again almost immediately (from
-    // the NEW mount), so the old guard let this stale reveal keep
-    // running right alongside the new mount's own fresh reveal -- two
-    // loops writing the same holder.style.mask in the same frames,
-    // confirmed live as cards visibly getting stuck mid-blinds. Capturing
-    // the token at start and re-checking it catches that: a newer mount
-    // always bumps it, so a superseded reveal reliably notices and bails
-    // even when the dataset flag alone would say "still mounted."
-    const myToken = targetEl._mountToken;
-    const t0 = performance.now();
-    let pausedSince = null;
-    let totalPaused = 0;
-    let lastWrite = 0;
-    let interactive = false;
-    function tick(now) {
-      if (!targetEl.dataset.customMounted || targetEl._mountToken !== myToken) return;
-      if (pausedSince !== null) {
-        if (!isReadyFn()) {
-          requestAnimationFrame(tick);
-          return;
-        }
-        totalPaused += now - pausedSince;
-        pausedSince = null;
-      }
-      const p = Math.min(1, (now - t0 - totalPaused) / durationMs);
-      const eased = 1 - Math.pow(1 - p, 3); // ease-out cubic, same feel as the burn reveal
-      if (eased >= BLINDS_RISE_CAP && !isReadyFn()) {
-        pausedSince = now;
-      }
-      // See BLINDS_INTERACTIVE_THRESHOLD's own comment -- a one-way flip,
-      // not re-checked once true, since eased only ever climbs (or holds
-      // at the ready-gate above) for the life of a single reveal.
-      if (!interactive && eased >= BLINDS_INTERACTIVE_THRESHOLD) {
-        interactive = true;
-        targetEl.style.pointerEvents = "auto";
-      }
-      if (eased < 1) {
-        if (now - lastWrite >= BLINDS_WRITE_INTERVAL) {
-          lastWrite = now;
-          const mask = buildBlindsMask(eased);
-          targetEl.style.mask = mask;
-          targetEl.style.webkitMask = mask;
-        }
-        requestAnimationFrame(tick);
-      } else {
-        // Fully revealed -- drop the mask entirely rather than leaving it
-        // parked at "wide open," so the video ends up in exactly the same
-        // DOM/style state as if it had never been masked at all.
-        targetEl.style.mask = "";
-        targetEl.style.webkitMask = "";
-      }
-    }
-    requestAnimationFrame(tick);
+  // Reveals anyway if playback never starts (e.g. autoplay blocked), so the
+  // frame can't stay invisible with YouTube's own play button hidden under it.
+  const VIDEO_REVEAL_FALLBACK = 3000;
+  // Interactive the moment it's visible: a wheel over the iframe still
+  // scrolls the page, and onScrollFrame snaps from that, so there's no
+  // lock left to hold off for.
+  function showVideoFrame(el) {
+    el.style.opacity = "";
+    el.style.pointerEvents = "auto";
   }
 
   // ---- cap how many players stay mounted at once ----
@@ -1108,9 +927,8 @@
   // session (confirmed live: the tab reached 2.8GB). This keeps only the
   // most recently mounted MAX_MOUNTED_VIDEOS around, destroying the
   // oldest beyond that the moment a new one mounts -- an evicted card
-  // just reverts to its static image, and re-mounts normally (full
-  // blinds reveal and all) if scrolled back to later, same as if it had
-  // never been visited.
+  // just reverts to its static image, and re-mounts normally if scrolled
+  // back to later, same as if it had never been visited.
   // Lowered from 3 to 0 by request, alongside removing the preload
   // observer entirely (see below) -- confirmed live via 1.4GB Chrome
   // memory usage that 3 real concurrent YouTube iframes (each one is
@@ -1120,9 +938,8 @@
   // At 0, only ever the currently-active video (which enforceMountCap
   // always protects regardless of this number -- see its own comment)
   // stays mounted; nothing preloads ahead of it anymore. Trades away the
-  // instant/stall-free reveal preloading bought -- the blinds reveal's
-  // ready-gate will now actually hold and wait far more often, since
-  // there's no more head start on the load.
+  // instant/stall-free reveal preloading bought -- a video now waits on
+  // its own load far more often, since there's no more head start.
   const MAX_MOUNTED_VIDEOS = 0;
   const mountedQueue = []; // entries, oldest first
   // Holder -> entry, so a holder that's already preloading (see
@@ -1141,20 +958,9 @@
     delete entry.holder.dataset.customMounted;
     delete entry.holder._wantsActivate;
     entryByHolder.delete(entry.holder);
-    // A real gap otherwise, found while chasing a "stuck mid-blinds"
-    // report: enforceMountCap's own aggressive eviction (MAX_MOUNTED_
-    // VIDEOS is 0 -- anything that isn't the newest mount or already
-    // playing gets unmounted the instant something newer shows up) can
-    // cut a reveal off mid-animation, well before playBlindsReveal's own
-    // tick() next gets a chance to notice (its dataset.customMounted
-    // check only runs once per animation frame) -- and unlike innerHTML
-    // above, an inline style.mask isn't a CHILD, so clearing this
-    // holder's content did nothing to it. closeBlindsMask resets it to
-    // fully closed, matching the state a never-yet-mounted holder starts
-    // in, so a holder evicted mid-reveal can't carry a stale, half-open
-    // mask value into whatever mounts it next -- mountCustomPlayer
-    // already does the same reset on its own side for the same reason.
-    closeBlindsMask(entry.holder);
+    // Back to its never-mounted resting state (inline styles aren't
+    // cleared by the innerHTML reset above).
+    hideVideoFrame(entry.holder);
     // Move the holder back home -- see mountCustomPlayer's own comment
     // for why it left in the first place. Harmless to skip if somehow
     // already home (falsy _homeParent) or mid-relocation elsewhere.
@@ -1206,22 +1012,13 @@
   // often nothing left to wait on at all.
   //
   // requestActivate() is what a card becoming genuinely active always
-  // calls, whether or not a preload got a head start on it first:
-  //   - starts the blinds reveal immediately, exactly like before --
-  //     playBlindsReveal's own ready-gate already handles "still loading"
-  //     gracefully, so there's no need to wait for readiness here too.
-  //   - engages the actual player (unmute/mute, playVideo()) once ready
-  //     -- either right away if preloading already finished, or via
-  //     onReady's own wantsActivate check below if it's still in flight.
-  // Both entry.revealStarted and entry.activated guard against doing
-  // either part twice, since this can legitimately be called more than
-  // once for the same entry (see the activation observer).
+  // calls: once the player is ready, engagePlayer() starts playback and
+  // shows the frame -- right away if it's already ready, otherwise via
+  // onReady's own wantsActivate check below. entry.activated guards
+  // against doing that twice, since this can legitimately be called more
+  // than once for the same entry (see the activation observer).
   function requestActivate(entry) {
     entry.holder._wantsActivate = true;
-    if (!entry.revealStarted) {
-      entry.revealStarted = true;
-      playBlindsReveal(entry.holder, 1600, () => entry.ready);
-    }
     if (entry.ready) engagePlayer(entry);
   }
   function engagePlayer(entry) {
@@ -1253,6 +1050,7 @@
     if (soundEnabled) entry.player.unMute();
     else entry.player.mute();
     if (typeof entry.player.setVolume === "function") entry.player.setVolume(volumeLevel);
+    setTimeout(() => revealEntry(entry), VIDEO_REVEAL_FALLBACK);
     // Only now does a scroll-out mean anything to reset -- a preload that
     // never got shown just sits in mountedQueue until the cap reclaims
     // it (see enforceMountCap), same as it always could.
@@ -1265,6 +1063,15 @@
     // .event-media it was moved OUT of) never moves, so climbing from
     // there instead still reaches the right section either way.
     observeVideoVisibility(entry.holder._homeParent.closest(".event"), entry);
+  }
+  // Called on first PLAYING and by engagePlayer's fallback timer, whichever
+  // comes first. Both can arrive after this entry was unmounted -- possibly
+  // with its holder already remounted for another video -- so it only acts
+  // while it's still the live entry for that holder.
+  function revealEntry(entry) {
+    if (entry.revealed || entryByHolder.get(entry.holder) !== entry) return;
+    entry.revealed = true;
+    showVideoFrame(entry.holder);
   }
 
   async function mountCustomPlayer(holder, activateImmediately) {
@@ -1307,11 +1114,8 @@
     // the current one after the await, not just whether SOME mount is
     // active.
     const myToken = (holder._mountToken = (holder._mountToken || 0) + 1);
-    // Closed before anything else -- see closeBlindsMask's own comment
-    // for why this can't wait until onReady/playBlindsReveal. Harmless to
-    // do this even for a background preload that may never become
-    // active: resting state is closed either way.
-    closeBlindsMask(holder);
+    // Before anything else -- see hideVideoFrame for why this can't wait.
+    hideVideoFrame(holder);
     if (activateImmediately) holder._wantsActivate = true;
     const { ytId, ytStart } = holder.dataset;
     const YT = await loadYoutubeApi();
@@ -1399,14 +1203,17 @@
           }
         },
         onStateChange: (e) => {
-          if (e.data === 1) setCurrentlyPlaying(entry); // PLAYING
+          if (e.data === 1) { // PLAYING
+            setCurrentlyPlaying(entry);
+            if (entry.activated) revealEntry(entry);
+          }
         },
       },
     });
     const entry = {
       holder, player,
       pause: () => player.pauseVideo(),
-      ready: false, activated: false, revealStarted: false,
+      ready: false, activated: false, revealed: false,
     };
     entryByHolder.set(holder, entry);
     customPlayers.push(player);
@@ -1456,11 +1263,22 @@
     // ago); falls back to mounting AND activating together otherwise --
     // now the overwhelmingly common path, same as the original,
     // pre-preload one-phase behavior.
+    // Cancel a still-pending activation the moment this card drops back
+    // below the threshold. Without this, a fast scroll-through schedules
+    // this same delayed callback on every card that briefly crossed 50%
+    // and lets ALL of them fire later regardless of whether the user is
+    // still anywhere near them by then -- the real cause of "premature
+    // blinds" reports: not a timing bug in the reveal animation itself,
+    // but a stale mount+autoplay firing late on a card already scrolled
+    // past. 450ms (up from an earlier, uncancelled 300ms) so a genuine
+    // fast scroll-through has more room to outrun it.
+    let activateTimer = null;
     const activateObserver = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
           if (entry.isIntersecting && entry.intersectionRatio > 0.5) {
-            setTimeout(() => {
+            clearTimeout(activateTimer);
+            activateTimer = setTimeout(() => {
               if (holder.dataset.customMounted) {
                 const e = entryByHolder.get(holder);
                 if (e) requestActivate(e);
@@ -1468,7 +1286,9 @@
               } else {
                 mountCustomPlayer(holder, true);
               }
-            }, 300);
+            }, 450);
+          } else {
+            clearTimeout(activateTimer);
           }
         });
       },
@@ -1569,6 +1389,78 @@
   // scroll — the worst case is a cosmetic flicker in a number, not a
   // skippable roadblock, which is what made the discrete rewrite worth
   // doing in the first place.
+  // ---- cached geometry: measured ONCE, refreshed only on resize ----
+  // This is the actual fix for card-to-card scrolling not feeling smooth.
+  // updateDisplay used to call querySelectorAll(".event") and then
+  // getBoundingClientRect() on all 131 of them on EVERY 'scroll' event.
+  // getBoundingClientRect() forces a synchronous style+layout flush, and
+  // the progress bar's own scroll listener writes progressBar.style.width
+  // right afterward -- so every scroll tick was a read/write/read/write
+  // layout thrash over 131 full-viewport sections. That cost lands
+  // precisely during the smooth snap animation (native smooth scrolling
+  // fires 'scroll' every frame), which is why the transition specifically
+  // was the thing that stuttered.
+  //
+  // Every .event is a plain normal-flow block whose geometry only changes
+  // on resize, so its position in DOCUMENT space can be measured once and
+  // reused. Live scroll position is then just window.scrollY -- a number
+  // that's free to read. 131 layout flushes per frame becomes zero.
+  const heroEl = document.getElementById("hero");
+  const eventEls = [...document.querySelectorAll(".event")];
+  let heroGeom = { top: 0, height: 0 };
+  let eventGeom = []; // { top, height } in document coords, index-aligned to eventEls
+  function measureGeometry() {
+    const sy = window.scrollY;
+    const hr = heroEl.getBoundingClientRect();
+    heroGeom = { top: hr.top + sy, height: hr.height };
+    eventGeom = eventEls.map((el) => {
+      const r = el.getBoundingClientRect();
+      return { top: r.top + sy, height: r.height };
+    });
+  }
+  measureGeometry();
+  // Images finishing their fade-in don't change .event box heights (the
+  // art is position:fixed), but web fonts landing can reflow the hero, so
+  // re-measure once everything has settled.
+  window.addEventListener("load", measureGeometry);
+
+  // Ratio of a cached box that's currently on screen -- pure arithmetic,
+  // no DOM access at all.
+  function geomRatio(g, sy, vh) {
+    if (g.height <= 0) return 0;
+    const top = g.top - sy;
+    const visible = Math.min(top + g.height, vh) - Math.max(top, 0);
+    return Math.max(0, visible) / g.height;
+  }
+
+  // The cards are sequential and roughly viewport-tall, so the winner is
+  // always within a card or two of wherever the viewport's midpoint falls.
+  // Binary-search to that neighbourhood and compare a handful of
+  // candidates instead of scanning all 131 -- same "highest raw ratio, no
+  // minimum threshold" rule as before (see the comment below for why
+  // there's deliberately no floor), just without the linear sweep.
+  function findWinner(sy, vh) {
+    let winner = heroEl;
+    let winnerRatio = geomRatio(heroGeom, sy, vh);
+    if (!eventGeom.length) return winner;
+    const probe = sy + vh / 2;
+    let lo = 0;
+    let hi = eventGeom.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (eventGeom[mid].top + eventGeom[mid].height <= probe) lo = mid + 1;
+      else hi = mid;
+    }
+    for (let i = Math.max(0, lo - 2); i <= Math.min(eventGeom.length - 1, lo + 2); i++) {
+      const r = geomRatio(eventGeom[i], sy, vh);
+      if (r > winnerRatio) {
+        winnerRatio = r;
+        winner = eventEls[i];
+      }
+    }
+    return winner;
+  }
+
   function updateDisplay() {
     // Frozen for as long as the outro is showing: it isn't a
     // scroll-geometry destination at all (see snapTargets below), so this
@@ -1606,16 +1498,7 @@
     // #outro no longer participates here at all -- it's a permanent fixed
     // overlay, shown/hidden only by revealEnding/exitEnding directly, so
     // it can never "win" a visibility comparison it isn't part of.
-    const heroEl = document.getElementById("hero");
-    let winner = heroEl;
-    let winnerRatio = visibleRatio(heroEl.getBoundingClientRect());
-    document.querySelectorAll(".event").forEach((el) => {
-      const r = visibleRatio(el.getBoundingClientRect());
-      if (r > winnerRatio) {
-        winnerRatio = r;
-        winner = el;
-      }
-    });
+    const winner = findWinner(window.scrollY, window.innerHeight);
 
     if (winner === heroEl) {
       if (activeSection) deactivateCurrent();
@@ -1640,38 +1523,74 @@
     renderYearWatermark(year);
     yearWatermarkEl.classList.remove("hidden");
   }
-  function visibleRatio(rect) {
-    if (rect.height <= 0) return 0;
-    const visibleTop = Math.max(rect.top, 0);
-    const visibleBottom = Math.min(rect.bottom, window.innerHeight);
-    const visibleHeight = Math.max(0, visibleBottom - visibleTop);
-    return visibleHeight / rect.height;
-  }
-  window.addEventListener("scroll", updateDisplay, { passive: true });
-
-  // Explicit navigation entry point (year rail, begin/top buttons): jump
-  // straight to a known index. Named separately from applyState even
-  // though it's a thin wrapper, so call sites read as intent ("go to
-  // this slide") rather than "apply this rendering."
-  function goTo(idx) {
-    applyState(idx);
-  }
+  // No 'scroll' listener of its own anymore -- updateDisplay and
+  // updateProgress are both driven by the single coalesced pump below.
 
   // ---- scroll progress bar ----
-  function updateProgress() {
+  // doc.scrollHeight is itself a layout-forcing read, so it's cached the
+  // same way the card geometry above is: it only changes when the
+  // document does, not on every tick.
+  let maxScroll = 0;
+  function measureScrollRange() {
     const doc = document.documentElement;
-    const scrollTop = doc.scrollTop || document.body.scrollTop;
-    const scrollHeight = doc.scrollHeight - doc.clientHeight;
-    const pct = scrollHeight > 0 ? (scrollTop / scrollHeight) * 100 : 0;
+    maxScroll = doc.scrollHeight - doc.clientHeight;
+  }
+  measureScrollRange();
+  window.addEventListener("load", measureScrollRange);
+  function updateProgress() {
+    const pct = maxScroll > 0 ? (window.scrollY / maxScroll) * 100 : 0;
     progressBar.style.width = pct + "%";
   }
-  window.addEventListener("scroll", updateProgress, { passive: true });
   updateProgress();
+
+  // Every scroll this file makes goes through here, so the pump below can
+  // tell its own movement apart from movement it didn't make.
+  let selfScrollY = window.scrollY;
+  function scrollPageTo(y) {
+    selfScrollY = Math.max(0, Math.min(maxScroll, y));
+    window.scrollTo(0, selfScrollY);
+  }
+
+  // ---- one coalesced scroll pump ----
+  // Two separate 'scroll' listeners used to run per tick: one that READ
+  // layout (updateDisplay) and one that WROTE style (updateProgress).
+  // Browsers fire scroll events faster than they paint, so that was
+  // several full read/write cycles per frame, each one invalidating the
+  // layout the next one had to re-resolve. One rAF-coalesced callback
+  // runs both AT MOST once per frame, reads first, writes second -- so
+  // the work is capped at the refresh rate and never interleaved.
+  let scrollPumpQueued = false;
+  let lastPumpY = window.scrollY;
+  function onScrollFrame() {
+    scrollPumpQueued = false;
+    const y = window.scrollY;
+    const prevY = lastPumpY;
+    lastPumpY = y;
+    // Movement this file didn't make. Our own wheel/touch handlers prevent
+    // the page's native scroll and drive the reel instead, so this is
+    // mostly a wheel over a YouTube iframe: its wheel events never reach
+    // this page, but the browser still passes the scroll through (confirmed
+    // live: 3 ticks over a live iframe moved the page 300px, 0 wheel events
+    // seen). Fed to the reel like any other input -- see onForeignScroll.
+    if (y !== prevY && Math.abs(y - selfScrollY) > 2) {
+      onForeignScroll(y - prevY);
+    }
+    updateDisplay();  // reads (cached geometry + scrollY)
+    updateProgress(); // writes
+  }
+  window.addEventListener(
+    "scroll",
+    () => {
+      if (scrollPumpQueued) return;
+      scrollPumpQueued = true;
+      requestAnimationFrame(onScrollFrame);
+    },
+    { passive: true }
+  );
 
   // ---- buttons ----
   document.getElementById("begin-btn").addEventListener("click", () => {
-    goTo(1); // snapTargets[0] is hero, [1] is the first event
-    document.getElementById("events").scrollIntoView({ behavior: "smooth" });
+    reelJumpTo(1); // snapTargets[0] is hero, [1] is the first event
   });
   document.getElementById("top-btn").addEventListener("click", () => {
     // Lives inside #outro, so clicking it needs to actually dismiss the
@@ -1683,18 +1602,12 @@
     lastEventEl.classList.remove("active", "leaving");
     if (activeSection === lastEventEl) activeSection = null;
     syncVideoSlotVisibility();
-    goTo(0);
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    reelJumpTo(0);
   });
 
-  // ---- gentle snap-to-card once scrolling has actually settled ----
-  // Deliberately not native CSS scroll-snap: that reacts on every scroll
-  // tick, which is exactly what makes a fast scroll feel interrupted. This
-  // only evaluates once real wheel/touch input has been idle for a beat —
-  // so a fast wheel-spree never gets nudged mid-motion, only the resting
-  // position gets aligned once you've actually stopped. That "actually
-  // stopped" moment is also the only time currentIdx is allowed to change
-  // from ordinary scrolling — see applyState's big comment above.
+  // ---- snap targets ----
+  // Every position the page can rest on. The reel (below) decides which
+  // one; the page only ever scrolls straight to one of these.
   const outroEl = document.getElementById("outro");
   // #outro deliberately excluded: it's a permanent fixed overlay now (see
   // style.css), not a document-flow section you scroll into, so it has no
@@ -1703,114 +1616,289 @@
   const lastEventEl = [...document.querySelectorAll(".event")].pop();
   const kaltsitIdx = snapTargets.indexOf(lastEventEl);
 
-  function nearestSnapTarget() {
-    let nearest = null;
+  // snapTargets is [hero, ...events], so it lines up with the cached
+  // geometry above: index 0 is heroGeom, index i is eventGeom[i - 1].
+  function snapTargetTop(idx) {
+    const g = idx === 0 ? heroGeom : eventGeom[idx - 1];
+    return g ? g.top : 0;
+  }
+  // Reads the cache rather than calling getBoundingClientRect() on all
+  // 132 targets. This ran on every gesture start AND every settle, both
+  // of which happen while the page is moving -- same forced-layout cost
+  // as updateDisplay's old sweep, landing at exactly the wrong moments.
+  function nearestSnapIdx(sy = window.scrollY) {
+    let nearest = 0;
     let nearestDist = Infinity;
-    snapTargets.forEach((el) => {
-      const dist = Math.abs(el.getBoundingClientRect().top);
+    for (let i = 0; i < snapTargets.length; i++) {
+      const dist = Math.abs(snapTargetTop(i) - sy);
       if (dist < nearestDist) {
         nearestDist = dist;
-        nearest = el;
+        nearest = i;
       }
-    });
+    }
     return nearest;
   }
 
-  // How far (px) you need to move from where THIS gesture started before
-  // it commits to the next/previous card, instead of snapping back to the
-  // one you started on. Deliberately not "whichever card is nearest by raw
-  // distance" — that requires crossing the halfway point (~50% of a
-  // viewport-tall card) before it flips, which felt like it took several
-  // wheel ticks to turn a page. This is a flat, card-height-independent
-  // threshold. Started at 70 (~2 ticks), halved to 35, then 17, then 10
-  // by request -- each still read as 2 ticks on real hardware, so halved
-  // again. The actual px-per-tick a real wheel/trackpad sends varies a
-  // lot by device/OS/browser, so this number is really "whatever value
-  // happens to clear one real tick's worth of delta on this specific
-  // setup," not a universal constant -- expect it may need further
-  // tuning.
-  const SNAP_COMMIT_PX = 5;
+  // ---- the reel: every card change goes through a zoom-out roulette ----
+  // Input (wheel, touch, keys, and scroll passed through from a YouTube
+  // iframe) moves a continuous reel position rather than the page. While it
+  // moves, a fixed overlay zooms out into a vertical drum of cards and
+  // rolls; once input stops it settles on a whole card, and only zooms back
+  // in once that card's real art has loaded and decoded, so the page it
+  // hands back to is never still dark. The page itself follows one card at
+  // a time, and only while the overlay fully covers it -- video mounting,
+  // the ending swipe, the counter and the year rail all keep running off
+  // real scroll position exactly as before.
+  const REEL = { curve: 16, cardSize: 0.44, gap: 110, zoomOutMs: 380, zoomInMs: 650, roll: 9, holdSpeed: 4, dim: 0.4 };
+  const REEL_IDLE_MS = 170;             // no input for this long = the gesture is over
+  const REEL_OUT_DWELL_MS = 120;        // minimum time fully zoomed out, so one tick doesn't read as a flicker
+  const REEL_HANDOFF_TIMEOUT_MS = 1500; // zoom back in anyway if a card's art never finishes loading
+  const REEL_PRELOAD_RADIUS = 20;
+  const REEL_H = 1080;
+  const WHEEL_PX_PER_CARD = 350;
+  const TOUCH_PX_PER_CARD = 420;
+  // ?motion=full keeps the effect on for testing on a machine that asks for
+  // reduced motion; otherwise that preference skips the overlay entirely.
+  const reelReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches && !/[?&]motion=full\b/.test(location.search);
 
-  let snapTimer = null;
-  let gestureStartY = 0;
-  let gestureStartIdx = 0;
-  function scheduleSnap() {
-    if (!snapTimer) {
-      // Fresh gesture starting from an already-settled position — record
-      // where it began so later we can measure net movement from HERE,
-      // not just "whatever's closest right now."
-      gestureStartY = window.scrollY;
-      gestureStartIdx = snapTargets.indexOf(nearestSnapTarget());
+  const reelStage = document.getElementById("reel-stage");
+  const reelWorld = document.getElementById("reel-world");
+  const reelSpot = document.getElementById("reel-spot");
+  const reelHud = document.getElementById("reel-hud");
+  const reelLast = snapTargets.length - 1;
+  const rClamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const rEaseOut = (t) => 1 - Math.pow(1 - t, 3);
+  const rEaseInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+
+  let reelPos = 0, reelTarget = 0, reelGestureStart = null, reelHeldDir = 0;
+  let reelLastInput = -1e9;
+  let reelZoomT = 0, reelZoomFrom = 0, reelZoomTo = 0, reelZoomStart = 0, reelZoomDur = 1, reelOutReadyAt = 0;
+  let reelRunning = false, reelLastFrame = 0, reelSyncedIdx = -1, reelHudFor = -1;
+  // 16:9 cards, the same shape as the mockup. Zoomed all the way in, a card
+  // covers the viewport the way the real art layer's object-fit:cover does:
+  // scaled until it covers, centered.
+  const reelW = 1920;
+  const reelPitch = () => REEL_H + REEL.gap;
+  const reelZoomIn = () => Math.max(innerWidth / reelW, innerHeight / REEL_H);
+  const reelZoomOut = () => Math.min((REEL.cardSize * innerHeight) / REEL_H, (0.9 * innerWidth) / reelW);
+
+  const reelPreloaded = new Map();
+  function reelPreloadAround(c) {
+    for (let i = c - REEL_PRELOAD_RADIUS; i <= c + REEL_PRELOAD_RADIUS; i++) {
+      if (i < 1 || i > reelLast || reelPreloaded.has(i)) continue;
+      const im = new Image();
+      im.decoding = "async";
+      im.src = MEMENTOS[i - 1].image;
+      reelPreloaded.set(i, im);
     }
-    clearTimeout(snapTimer);
-    snapTimer = setTimeout(() => {
-      const delta = window.scrollY - gestureStartY;
-      // Small movement: snap back to wherever the gesture started (this is
-      // the 2-tick "resist jitter" behavior).
-      //
-      // Large movement used to mean "land on whichever card is nearest
-      // right now" unconditionally -- a real, confirmed bug: nearestSnapTarget()
-      // picks by raw on-screen distance, which still needs the gesture to
-      // cross roughly the HALFWAY point of a card's height (~450px+ on a
-      // typical viewport) before it resolves to anything other than the
-      // card the gesture started on. SNAP_COMMIT_PX only ever decided
-      // "should this look past the start card at all" -- it never actually
-      // controlled where a modest-but-real tick (confirmed live: a single
-      // 100px tick, well clear of the 5px threshold) landed, so anything
-      // short of that ~450px halfway point just fell back to the start
-      // card regardless, reading as "nothing happened."
-      //
-      // Fixed by splitting the two genuinely different cases the old
-      // single nearestSnapTarget() call was trying to cover at once:
-      //   - Movement cleared the threshold but nearest-by-position STILL
-      //     resolves to the start card (i.e. under the halfway point) --
-      //     commit exactly one card in the movement's own direction
-      //     instead, so a single real tick reliably moves exactly one
-      //     card, matching SNAP_COMMIT_PX's own stated intent.
-      //   - Movement already carried past that halfway point on its own
-      //     (a long/fast continuous scroll) -- trust the raw nearest,
-      //     uncapped, same as before. Capping this to ±1 was the earlier
-      //     "snaps 20 events back" bug: a long continuous scroll can land
-      //     many cards past where it started, and capping the landing to
-      //     ±1 meant jumping backward across everything already scrolled
-      //     past.
-      // No explicit clamp needed to keep either case from landing past
-      // Kaltsit: #outro isn't in snapTargets at all anymore (it's a
-      // permanent fixed overlay, not a scroll destination), so
-      // nearestSnapTarget() can never resolve to it in the first place --
-      // only the one-card-at-a-time case needs its own explicit clamp,
-      // since it computes an index directly rather than deriving one from
-      // on-screen geometry.
-      const nearestIdx = snapTargets.indexOf(nearestSnapTarget());
-      let targetIdx;
-      if (Math.abs(delta) <= SNAP_COMMIT_PX) {
-        targetIdx = gestureStartIdx;
-      } else if (nearestIdx === gestureStartIdx) {
-        targetIdx = Math.max(
-          0,
-          Math.min(snapTargets.length - 1, gestureStartIdx + (delta > 0 ? 1 : -1))
-        );
-      } else {
-        targetIdx = nearestIdx;
-      }
-      const target = snapTargets[targetIdx];
-      if (target && Math.abs(target.getBoundingClientRect().top) > 4) {
-        target.scrollIntoView({ behavior: "smooth", block: "start" });
-      }
-      applyState(targetIdx);
-      snapTimer = null;
-      // History: started at 150ms, raised to 500ms because a slow,
-      // deliberate scroller's natural pause between individual wheel
-      // ticks could get mistaken for "done scrolling" and evaluate (and
-      // reset gestureStartY) too early. Brought down to 125ms by request
-      // once SNAP_COMMIT_PX (above) dropped to 5 -- with a threshold that
-      // small, virtually any real tick's movement already clears it well
-      // before this fires, so there's much less left riding on this
-      // window being generous; it's now mostly just "how long after your
-      // last tick before it commits," which reads as noticeably snappier
-      // at 125ms. Revisit if a genuinely slow scroller's pauses start
-      // getting cut off again.
-    }, 125);
+  }
+
+  const reelCells = new Map();
+  let reelRadius = 5, reelCenter = null;
+  function makeReelCell(i) {
+    const el = document.createElement("div");
+    el.className = "reel-card";
+    if (i === 0) {
+      el.classList.add("reel-hero");
+      el.innerHTML = "<span>M FOR<br>MEMENTOS</span>";
+    } else {
+      const img = new Image();
+      img.decoding = "async";
+      img.alt = "";
+      img.src = MEMENTOS[i - 1].image;
+      el.appendChild(img);
+    }
+    reelWorld.appendChild(el);
+    return { el, i };
+  }
+  function syncReelCells(force) {
+    const c = Math.round(reelPos);
+    if (!force && c === reelCenter) return;
+    reelCenter = c;
+    reelPreloadAround(c);
+    const want = new Set();
+    for (let i = c - reelRadius; i <= c + reelRadius; i++) {
+      if (i < 0 || i > reelLast) continue;
+      want.add(i);
+      if (!reelCells.has(i)) reelCells.set(i, makeReelCell(i));
+    }
+    for (const [i, cell] of reelCells) if (!want.has(i)) { cell.el.remove(); reelCells.delete(i); }
+  }
+  function rebuildReel() {
+    reelWorld.style.setProperty("--reel-w", reelW + "px");
+    reelWorld.style.setProperty("--reel-h", REEL_H + "px");
+    reelStage.style.perspective = Math.round(innerHeight * 1.6) + "px";
+    reelSpot.style.boxShadow = `0 0 0 300vmax rgba(5,7,10,${REEL.dim})`;
+    const flat = Math.ceil((innerHeight * 1.2) / (reelPitch() * reelZoomOut()) / 2) + 3;
+    reelRadius = REEL.curve > 0.5 ? Math.min(flat, Math.floor(85 / REEL.curve)) : flat;
+    syncReelCells(true);
+  }
+  // Card d positions from the center, laid on a drum whose arc between cards
+  // is one pitch: spacing reads like a flat strip at the middle while the
+  // reel bends away top and bottom.
+  function placeReelCard(cell, d) {
+    const step = (REEL.curve * Math.PI) / 180;
+    let y = d * reelPitch(), z = 0, ang = 0;
+    if (step > 0.009) {
+      const theta = d * step, r = reelPitch() / step;
+      y = r * Math.sin(theta);
+      z = r * (Math.cos(theta) - 1);
+      ang = (-theta * 180) / Math.PI;
+    }
+    cell.el.style.visibility = Math.abs(d * REEL.curve) > 88 ? "hidden" : "";
+    cell.el.style.transform = `translate3d(${-reelW / 2}px, ${y - REEL_H / 2}px, ${z}px) rotateX(${ang}deg)`;
+  }
+
+  function renderReel() {
+    const vw = innerWidth, vh = innerHeight;
+    const zIn = reelZoomIn(), zOut = reelZoomOut();
+    const z = Math.exp(Math.log(zIn) + (Math.log(zOut) - Math.log(zIn)) * reelZoomT);
+    reelWorld.style.transform = `translate(${vw / 2}px, ${vh / 2}px) scale3d(${z}, ${z}, ${z})`;
+    for (const cell of reelCells.values()) placeReelCard(cell, cell.i - reelPos);
+    const vis = reelZoomT > 0 ? "visible" : "hidden";
+    reelStage.style.visibility = reelSpot.style.visibility = reelHud.style.visibility = vis;
+    reelStage.style.opacity = rClamp(reelZoomT * 5, 0, 1).toFixed(3);
+    reelSpot.style.width = reelW * z + "px";
+    reelSpot.style.height = REEL_H * z + "px";
+    reelSpot.style.transform = `translate(${vw / 2 - (reelW * z) / 2}px, ${vh / 2 - (REEL_H * z) / 2}px)`;
+    reelSpot.style.opacity = rClamp((reelZoomT - 0.15) / 0.5, 0, 1).toFixed(3);
+    reelHud.style.opacity = rClamp((reelZoomT - 0.4) / 0.4, 0, 1).toFixed(3);
+    const cur = rClamp(Math.round(reelPos), 0, reelLast);
+    if (cur !== reelHudFor) {
+      reelHudFor = cur;
+      const m = cur > 0 ? MEMENTOS[cur - 1] : null;
+      reelHud.querySelector(".ry").textContent = m ? m.year : "";
+      reelHud.querySelector(".rl").textContent = m ? `${String(cur).padStart(3, "0")} / ${total}` : "";
+      reelHud.querySelector(".rn").textContent = m ? m.name : "M FOR MEMENTOS";
+    }
+  }
+
+  function setReelZoom(to, now) {
+    if (to === reelZoomTo) return;
+    reelZoomFrom = reelZoomT;
+    reelZoomTo = to;
+    reelZoomStart = now;
+    const full = to === 1 ? REEL.zoomOutMs : REEL.zoomInMs;
+    reelZoomDur = Math.max(1, full * Math.abs(to - reelZoomFrom));
+    if (to === 1) reelOutReadyAt = now + reelZoomDur + REEL_OUT_DWELL_MS;
+  }
+
+  // The page jumps straight to the card the reel is heading for. `force`
+  // realigns it even when it's already that card, after scroll passed
+  // through from a video has moved the page underneath.
+  function syncLivePage(idx, force) {
+    if (!force && idx === reelSyncedIdx) return;
+    reelSyncedIdx = idx;
+    scrollPageTo(snapTargetTop(idx));
+  }
+
+  // A reload returns to the card you were on from this record rather than
+  // the browser's scroll restoration: with that on, a scroll passed through
+  // from a video right after a reload couldn't be told apart from the
+  // restoration itself, and was swallowed as one (confirmed live).
+  const CARD_KEY = "mfmCard";
+  let rememberedIdx = -1;
+  function rememberCard(idx) {
+    if (idx === rememberedIdx) return;
+    rememberedIdx = idx;
+    try { sessionStorage.setItem(CARD_KEY, String(idx)); } catch (e) {}
+  }
+  function savedCard() {
+    try {
+      const v = parseInt(sessionStorage.getItem(CARD_KEY), 10);
+      return Number.isInteger(v) && v >= 0 && v <= reelLast ? v : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // The zoom-in waits on this: the landing card's real <img> loaded, shown
+  // without its own fade-in, and decoded.
+  let artWaitIdx = -1, artReadyIdx = -1, artWaitSince = 0;
+  function prepareLiveArt(idx) {
+    if (artWaitIdx === idx) return;
+    artWaitIdx = idx;
+    artReadyIdx = -1;
+    artWaitSince = performance.now();
+    const img = idx > 0 ? eventEls[idx - 1].querySelector(".event-media img") : null;
+    if (!img) { artReadyIdx = idx; return; }
+    const finish = () => {
+      img.style.transition = "none";
+      img.classList.add("loaded");
+      (img.decode ? img.decode().catch(() => {}) : Promise.resolve()).then(() => {
+        if (artWaitIdx === idx) artReadyIdx = idx;
+      });
+    };
+    if (!img.getAttribute("src")) img.src = img.dataset.src;
+    if (img.complete && img.naturalWidth) finish();
+    else img.addEventListener("load", finish, { once: true });
+  }
+  const liveArtReady = (idx, now) => artReadyIdx === idx || now - artWaitSince > REEL_HANDOFF_TIMEOUT_MS;
+
+  function kickReel() {
+    if (reelRunning) return;
+    reelRunning = true;
+    reelLastFrame = performance.now();
+    requestAnimationFrame(reelFrame);
+  }
+
+  function reelFrame(now) {
+    const dt = Math.min(0.05, (now - reelLastFrame) / 1000);
+    reelLastFrame = now;
+    if (reelHeldDir) {
+      reelTarget = rClamp(reelTarget + reelHeldDir * REEL.holdSpeed * dt, 0, reelLast);
+      reelLastInput = now;
+    }
+    const idle = now - reelLastInput > REEL_IDLE_MS;
+    if (idle && reelGestureStart !== null) {
+      // A short gesture still commits exactly one card; a long one lands wherever it rolled to.
+      const d = reelTarget - reelGestureStart;
+      reelTarget = rClamp(Math.abs(d) < 1 && Math.abs(d) > 0.02 ? reelGestureStart + Math.sign(d) : Math.round(reelTarget), 0, reelLast);
+      reelGestureStart = null;
+    }
+    reelPos = reelReducedMotion ? reelTarget : reelPos + (reelTarget - reelPos) * (1 - Math.exp(-dt * REEL.roll));
+    const settled = idle && reelGestureStart === null && Math.abs(reelTarget - reelPos) < 0.002;
+    if (settled) reelPos = reelTarget;
+    const landing = rClamp(Math.round(reelTarget), 0, reelLast);
+
+    if (reelReducedMotion) {
+      // No overlay: the page just changes card.
+      syncLivePage(landing, settled && Math.abs(scrollY - selfScrollY) > 1);
+      if (settled) { applyState(landing); rememberCard(landing); reelRunning = false; }
+      else requestAnimationFrame(reelFrame);
+      return;
+    }
+
+    if (reelZoomT >= 0.2 || settled) syncLivePage(landing, settled && Math.abs(scrollY - selfScrollY) > 1);
+    if (settled) { applyState(landing); rememberCard(landing); prepareLiveArt(landing); }
+
+    if (!settled) setReelZoom(1, now);
+    else if (now >= reelOutReadyAt && liveArtReady(landing, now)) setReelZoom(0, now);
+
+    const p = rClamp((now - reelZoomStart) / reelZoomDur, 0, 1);
+    reelZoomT = reelZoomFrom + (reelZoomTo - reelZoomFrom) * (reelZoomTo === 1 ? rEaseOut(p) : rEaseInOut(p));
+
+    syncReelCells(false);
+    renderReel();
+
+    if (settled && reelZoomTo === 0 && p >= 1) reelRunning = false;
+    else requestAnimationFrame(reelFrame);
+  }
+
+  function reelNudge(delta) {
+    if (reelGestureStart === null) reelGestureStart = Math.round(reelTarget);
+    reelTarget = rClamp(reelTarget + delta, 0, reelLast);
+    reelLastInput = performance.now();
+    kickReel();
+  }
+  function reelJumpTo(idx) {
+    idx = rClamp(idx, 0, reelLast);
+    // Far jumps start rolling a few cards out instead of spinning past every card in between.
+    if (Math.abs(idx - reelPos) > 3) reelPos = idx - Math.sign(idx - reelPos) * 3;
+    reelTarget = idx;
+    reelGestureStart = null;
+    reelLastInput = performance.now();
+    kickReel();
   }
 
   // ---- the ending: a forced swipe, both ways, not a scroll destination ----
@@ -1888,8 +1976,8 @@
   function revealEnding() {
     endscreenLocked = true;
     applyState(kaltsitIdx);
-    // Deactivate whatever ELSE might still be active first. The live
-    // geometry trigger in onWheel can fire a frame before updateDisplay's
+    // Deactivate whatever ELSE might still be active first. The input that
+    // triggers this can arrive a frame before updateDisplay's
     // own bookkeeping has caught up, so activeSection can still be some
     // earlier card (e.g. Lemuen) the instant this fires -- confirmed
     // live: 130/131's text visibly interleaved with 131/131's during the
@@ -1907,7 +1995,7 @@
     outroEl.classList.add("revealed");
     // updateDisplay() never runs while the outro is revealed (see its own
     // guard above), and no real scrolling happens for this swipe either
-    // (onWheel prevents it) -- so nothing else will ever set the counter
+    // (the input handlers prevent it) -- so nothing else will ever set the counter
     // to reflect the ending. Owning it explicitly here is what fixed a
     // real "counter still reads 127/131 while the endscreen is on screen"
     // bug: it was relying on a 'scroll' event that this transition never
@@ -1952,129 +2040,109 @@
     scheduleUnlock();
   }
 
-  function onWheel(e) {
-    // Blocks ALL wheel input for as long as a swipe (either direction) is
-    // actively mid-animation -- checked first, before anything else, so
-    // it applies uniformly regardless of outroEl.revealed's own momentary
-    // state (exitEnding flips that class the instant it starts, well
-    // before the animation itself finishes). Restores the original "hard
-    // stop, can't scroll past" intent for this one boundary specifically:
-    // without this, continuous real scrolling right as you exit the
-    // ending blows straight through Kaltsit mid-wipe instead of landing
-    // on it first (confirmed live: exiting while still wheeling landed
-    // on card 125, nowhere near Kaltsit, in one unbroken motion).
-    //
-    // This is deliberately NOT the same thing as the earlier "131 jump"
-    // fix below, and doesn't undo it: endscreenLocked is only ever true
-    // during an ACTIVE swipe -- it's already false the moment you're
-    // genuinely resting on Kaltsit with no swipe in flight, so ordinary
-    // backward scrolling away from an already-settled Kaltsit (reached
-    // the normal way, via scheduleSnap) is completely unaffected by this
-    // check and stays exactly as responsive as that fix made it.
-    if (endscreenLocked) {
-      e.preventDefault();
-      return;
-    }
+  // Every input source goes through here, so the ending's boundary rules are
+  // identical whether a card change came from the wheel, touch, a key, or a
+  // scroll passed through from a video: a swipe in flight swallows input,
+  // the outro only answers a backward move, and a forward move while
+  // resting on the last card swipes into the ending instead of rolling.
+  function reelInput(delta) {
+    if (endscreenLocked) return false;
     if (outroEl.classList.contains("revealed")) {
-      // The outro is a fixed overlay sitting on top of Kaltsit's own
-      // position -- without this, wheel input would scroll the page
-      // underneath it while it's shown. Any backward input immediately
-      // triggers the return swipe; forward input while already at the
-      // end is simply absorbed. (endscreenLocked, checked above, already
-      // covers "swipe in flight" -- by the time control reaches here,
-      // it's always the settled, ready-for-input case.)
-      e.preventDefault();
-      if (e.deltaY < 0) exitEnding();
-      return;
+      if (delta < 0) exitEnding();
+      return false;
     }
-    // Whenever Kaltsit is genuinely the thing on screen right now, the
-    // very next forward tick swipes straight into the ending -- immediate,
-    // no wait, mirroring exitEnding's backward tick above. Deliberately a
-    // LIVE geometry check (same >0.5 threshold updateDisplay itself uses
-    // to decide a winner), not currentIdx: currentIdx only updates once
-    // scheduleSnap's 500ms debounce settles, which broke this two
-    // different ways when tried -- (1) wheeling continuously with no
-    // pause never let currentIdx catch up to kaltsitIdx at all, so the
-    // ending could only ever be reached by stopping first, which read as
-    // a wall; (2) after fast-scrolling AWAY from Kaltsit and back within
-    // that 500ms window, currentIdx could still stale-read kaltsitIdx
-    // while the real screen showed a totally different card (confirmed
-    // live: card 116's own text/art rendered behind the endscreen, with
-    // the year rail stuck on that card's year). A fresh
-    // getBoundingClientRect() check has neither lag -- it reflects
-    // exactly what's on screen at the instant of this wheel event, same
-    // as updateDisplay's own winner-picking logic.
-    //
-    // Deliberately scoped to ONLY this one boundary: an earlier attempt
-    // extended the immediate-tick pattern to the Lemuen<->Kaltsit boundary
-    // too, which introduced the same class of corruption there -- reverted
-    // in favor of leaving every other card-to-card transition on the
-    // plain debounce below.
-    if (visibleRatio(lastEventEl.getBoundingClientRect()) > 0.5 && e.deltaY > 0) {
-      e.preventDefault();
+    if (delta > 0 && !reelRunning && Math.round(reelTarget) === kaltsitIdx) {
       revealEnding();
-      return;
+      return false;
     }
-    // Backward ticks near Kaltsit (or anything while not near Kaltsit at
-    // all) fall straight through to the ordinary debounce below. By this
-    // point endscreenLocked is already known false (the top-of-function
-    // check above would have returned otherwise), so this is always the
-    // genuinely-settled case -- ordinary scrolling away from a Kaltsit
-    // that was reached the normal way, nothing to do with the endscreen
-    // swipe at all. Nothing here needs to check endscreenLocked itself.
-    scheduleSnap();
+    reelNudge(delta);
+    return true;
   }
-  window.addEventListener("wheel", onWheel, { passive: false });
-  window.addEventListener("touchmove", (e) => {
-    if (endscreenLocked || outroEl.classList.contains("revealed")) return;
-    scheduleSnap();
-  }, { passive: true });
 
-  // ---- keyboard: the same card-to-card commit, reachable without a
-  // scroll gesture at all ----
-  // A real, confirmed gap otherwise: a genuine cross-origin YouTube
-  // iframe (controls:1 elsewhere in this file) receives wheel/touch
-  // input INTO ITS OWN document the instant the cursor rests over it --
-  // an iframe is a separate browsing context, not just another element
-  // on this page, so it never bubbles out to this page's own "wheel"
-  // listener above no matter what pointer-events says. With the video
-  // now filling most or all of the viewport (the whole point of the
-  // contain-fit work elsewhere in this file), that's most of the
-  // screen, most of the time -- confirmed live as a real "can't scroll
-  // past this card while the cursor's over the video" report. Keyboard
-  // input is dispatched by FOCUS, not cursor position, so this keeps
-  // working regardless of where the mouse happens to be resting.
-  //
-  // Mirrors onWheel's own special-case ordering (swipe lock, outro
-  // revealed, the Kaltsit->ending boundary) rather than just jumping
-  // currentIdx directly, so an arrow key can never desync from what a
-  // real wheel tick would have done in the same spot.
-  function commitCard(direction) {
-    if (endscreenLocked) return;
-    if (outroEl.classList.contains("revealed")) {
-      if (direction < 0) exitEnding();
-      return;
+  // A scroll that reached the page without passing through the handlers
+  // below (see onScrollFrame) -- almost always a wheel over a YouTube iframe,
+  // which the browser passes through to the page. Every frame of that motion
+  // feeds the reel. The page is left alone until the reel settles and
+  // realigns it, rather than snapped back mid-motion, which fights the
+  // browser's own smooth scrolling of the tick.
+  function onForeignScroll(deltaPx) {
+    if (!reelInput(deltaPx / WHEEL_PX_PER_CARD)) {
+      // Refused (the ending owns input right now), so no settle will come
+      // along to realign the page.
+      scrollPageTo(snapTargetTop(rClamp(reelSyncedIdx, 0, reelLast)));
     }
-    if (currentIdx === kaltsitIdx && direction > 0) {
-      revealEnding();
-      return;
-    }
-    const targetIdx = Math.max(0, Math.min(snapTargets.length - 1, currentIdx + direction));
-    const target = snapTargets[targetIdx];
-    if (target && Math.abs(target.getBoundingClientRect().top) > 4) {
-      target.scrollIntoView({ behavior: "smooth", block: "start" });
-    }
-    applyState(targetIdx);
+  }
+
+  window.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const unit = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? innerHeight : 1;
+    reelInput((e.deltaY * unit) / WHEEL_PX_PER_CARD);
+  }, { passive: false });
+
+  let reelTouchY = null;
+  window.addEventListener("touchstart", (e) => {
+    const onInput = e.target.closest && e.target.closest("input");
+    reelTouchY = e.touches.length === 1 && !onInput ? e.touches[0].clientY : null;
+  }, { passive: true });
+  window.addEventListener("touchmove", (e) => {
+    if (reelTouchY === null || e.touches.length !== 1) return;
+    e.preventDefault();
+    const y = e.touches[0].clientY;
+    reelInput((reelTouchY - y) / TOUCH_PX_PER_CARD);
+    reelTouchY = y;
+  }, { passive: false });
+  window.addEventListener("touchend", () => { reelTouchY = null; }, { passive: true });
+
+  // ---- keyboard ----
+  // Keys are delivered by focus, not by where the mouse is, so they reach
+  // this page even while the cursor sits over a YouTube iframe. A tap is
+  // exactly one card; held down, the reel spins at its own pace (the OS's
+  // key-repeat is ignored) until release.
+  const navKey = (e) => e.code || e.key; // some input paths deliver only one of the two
+  const keyDir = (k) => (k === "ArrowDown" || k === "PageDown" ? 1 : k === "ArrowUp" || k === "PageUp" ? -1 : 0);
+  let reelHoldTimer = null;
+  function stopHold() {
+    clearTimeout(reelHoldTimer);
+    if (!reelHeldDir) return;
+    reelHeldDir = 0;
+    reelLastInput = performance.now();
+    kickReel();
   }
   window.addEventListener("keydown", (e) => {
-    if (e.code !== "ArrowDown" && e.code !== "ArrowUp" && e.code !== "PageDown" && e.code !== "PageUp") return;
-    // Same "don't steal a focused control's own key handling" guard as
-    // the existing Space listener earlier in this file.
+    const dir = keyDir(navKey(e));
+    if (!dir) return;
+    // Don't steal a focused control's own key handling -- but a plain
+    // BUTTON has none for the arrows (and #begin-btn/the tag chips keep
+    // focus after a click). INPUT still bails: the volume slider uses them.
     const active = document.activeElement;
     const tag = active?.tagName;
-    if (tag === "BUTTON" || tag === "INPUT" || tag === "TEXTAREA" || active?.isContentEditable) return;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || active?.isContentEditable) return;
     e.preventDefault();
-    commitCard(e.code === "ArrowDown" || e.code === "PageDown" ? 1 : -1);
+    if (e.repeat) return;
+    stopHold();
+    if (!reelInput(dir)) return;
+    reelHoldTimer = setTimeout(() => { reelHeldDir = dir; kickReel(); }, 300);
+  });
+  window.addEventListener("keyup", (e) => { if (keyDir(navKey(e))) stopHold(); });
+  // Alt-tabbing mid-hold never delivers the keyup.
+  window.addEventListener("blur", stopHold);
+
+  // Clicking the player puts keyboard focus INSIDE the cross-origin iframe,
+  // and keys delivered there never reach this page -- the one remaining way
+  // the arrows could dead-end the way the wheel used to (the wheel itself is
+  // handled: see onScrollFrame). YouTube's own keyboard handling is off
+  // (disablekb:1 in playerVars), so it loses nothing by handing focus back.
+  // Fullscreen is the exception -- there the player really is the thing
+  // being used, and cards shouldn't be moving behind it.
+  window.addEventListener("focusin", (e) => {
+    if (document.fullscreenElement) return;
+    const el = e.target;
+    if (el.tagName !== "IFRAME" || !el.closest(".yt-frame")) return;
+    // Next tick, so this never lands in the middle of the player's own
+    // handling of the click that moved focus here.
+    setTimeout(() => {
+      if (!document.fullscreenElement && document.activeElement === el) el.blur();
+    }, 0);
   });
 
   // ---- keep the current slide stable across viewport-height changes ----
@@ -2092,16 +2160,29 @@
   window.addEventListener("resize", () => {
     if (resizeRaf) cancelAnimationFrame(resizeRaf);
     resizeRaf = requestAnimationFrame(() => {
-      const target = snapTargets[currentIdx];
-      if (!target) return;
-      window.scrollTo(0, window.scrollY + target.getBoundingClientRect().top);
+      // A resize is the one thing that genuinely invalidates the cached
+      // geometry (every card is min-height:100vh, so a viewport-height
+      // change resizes all 131 and moves every document offset). Both
+      // caches are rebuilt here -- this is the ONLY place they're
+      // rebuilt during normal use, which is the whole point: one
+      // measurement pass on a rare event instead of 131 per scroll tick.
+      measureGeometry();
+      measureScrollRange();
+      rebuildReel();
+      reelSyncedIdx = -1;
+      syncLivePage(rClamp(Math.round(reelTarget), 0, reelLast));
+      updateProgress();
+      renderReel();
     });
   });
 
-  // Correct the initial state once in case the browser restored a non-zero
-  // scroll position (back/forward navigation, a reload mid-page) — one
-  // real, settled measurement taken exactly once at load, not a continuous
-  // poll, same discipline as scheduleSnap's own settle check.
-  applyState(snapTargets.indexOf(nearestSnapTarget()));
+  // Start on the card from before a reload (see rememberCard), otherwise
+  // wherever the page happens to be.
+  reelPos = reelTarget = savedCard() ?? nearestSnapIdx();
+  applyState(reelTarget);
+  syncLivePage(reelTarget, true);
+  rememberCard(reelTarget);
+  rebuildReel();
+  renderReel();
   updateDisplay(); // no 'scroll' event fires on load if scrollY is unchanged
 })();
