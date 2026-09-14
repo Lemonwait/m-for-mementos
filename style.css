@@ -874,6 +874,20 @@ body.chrome-hidden #year-watermark{
 body.shadows-hidden .event-media::after{
   opacity: 0;
 }
+/* The card's own text and the year rail sit straight on top of a playing
+   video, where nothing darkens behind them -- the vignette above belongs
+   to .event-media, which the video covers -- so a bright frame washed
+   them out. A shadow hugging the text and dots themselves keeps them
+   readable on any frame. Part of the shadows toggle, like the top bar's
+   and the art's gradients. */
+.event.active .event-body,
+#year-rail{
+  filter: drop-shadow(0 0 1px rgba(5,7,10,0.9)) drop-shadow(0 1px 6px rgba(5,7,10,0.75));
+}
+body.shadows-hidden .event.active .event-body,
+body.shadows-hidden #year-rail{
+  filter: none;
+}
 
 /* Text pulled out of normal scroll flow the same way the art was: pinned
    to the viewport, with JS toggling which card's text is showing. Text is

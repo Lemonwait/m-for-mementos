@@ -480,10 +480,12 @@
     }
   }
 
-  // Hovering three specific zones -- the text panel, a video's own
-  // control bar, and the year rail (wired at each of their own creation
-  // points below) -- pauses auto-hide entirely while it lasts, for
-  // every mode that has one. Idle mode's own countdown only ever reset
+  // Hovering two specific zones -- the text panel and the year rail
+  // (wired at each of their own creation points below) -- pauses
+  // auto-hide entirely while it lasts, for every mode that has one. A
+  // video's frame used to be a third, but it fills the whole screen, so
+  // hovering it kept auto-hide paused the entire time a video was up.
+  // Idle mode's own countdown only ever reset
   // on actual mouse MOVEMENT anywhere on the page; resting the cursor
   // (not moving it, just parked reading text or fine-adjusting a
   // slider) still counted as "idle" and hid the UI mid-interaction
@@ -539,10 +541,16 @@
   setChromeMode(loadSavedChromeMode());
 
   chromeToggleBtn.addEventListener("click", () => {
-    // The universal escape hatch -- always drops back to plain manual
-    // toggling, regardless of which mode (if any) was active.
-    setChromeMode("manual");
-    setChromeHidden(!document.body.classList.contains("chrome-hidden"));
+    if (chromeMode !== "manual") {
+      // A mode is on: one click switches the whole thing off -- the mode
+      // AND the hiding -- by request. Toggling hidden here instead used to
+      // hide the UI again (it's always showing by the time the mouse
+      // reaches this button), leaving the eye lit after the mode was gone.
+      setChromeMode("manual");
+      setChromeHidden(false);
+    } else {
+      setChromeHidden(!document.body.classList.contains("chrome-hidden"));
+    }
     chromeToggleBtn.blur(); // see the mode buttons' own comment for why
   });
   chromeModeBtns.forEach((btn) => {
@@ -575,7 +583,7 @@
     if (!(chromeMode in IDLE_DELAYS)) return;
     document.body.classList.remove("cursor-hidden");
     setChromeHidden(false);
-    // Skipped while parked in one of the three pause zones (see
+    // Skipped while parked in one of the two pause zones (see
     // hoveringPauseZone's own comment) -- rearming here on every
     // stray pixel of movement is exactly what silently undid the
     // pause otherwise.
@@ -1245,12 +1253,6 @@
     const playerEl = document.createElement("div");
     holder.appendChild(playerEl);
     addVideoShield(holder); // after playerEl, so it stays over the iframe YT.Player swaps in for it
-    // "the playback slider" -- see pauseAutoHideForHover's own comment.
-    // Attached to the whole frame, not just a bottom strip: YouTube's own
-    // native bar (controls:1 below) can surface anywhere the mouse rests
-    // over the iframe, not just at a fixed position we control.
-    holder.addEventListener("mouseenter", pauseAutoHideForHover);
-    holder.addEventListener("mouseleave", resumeAutoHideAfterHover);
 
     const player = new YT.Player(playerEl, {
       videoId: ytId,
