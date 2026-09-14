@@ -48,9 +48,13 @@
   let videoRevealTimer = null;
   function syncVideoSlotVisibility() {
     clearTimeout(videoRevealTimer);
-    const holder = videoSlot.querySelector(".yt-frame");
-    const owningSection = holder && holder._homeParent && holder._homeParent.closest(".event");
-    if (!owningSection || owningSection !== activeSection) {
+    // Any holder in the slot, not just the first: a video left behind by the
+    // reel (see retireEntry) can sit beside the active card's own for a
+    // moment.
+    const owned = [...videoSlot.querySelectorAll(".yt-frame")].some(
+      (holder) => holder._homeParent && holder._homeParent.closest(".event") === activeSection
+    );
+    if (!activeSection || !owned) {
       videoSlot.classList.remove("showing");
       return;
     }
@@ -364,7 +368,7 @@
   // video to its untouched state, not remember a mid-playback timestamp
   // to resume from later. unmountVideoPlayer() already does exactly that
   // (destroy()s the real player and clears the mount flag), and scrolling
-  // back to the card re-triggers the normal mount observer below --
+  // back to the card starts it again (see activateVideoFor) --
   // static image, then the video, from scratch,
   // same as a first-ever visit. Unconditional (not gated on this being
   // the currently-playing entry): a card that's merely mounted-but-paused
@@ -375,7 +379,8 @@
       (entries) => {
         entries.forEach((e) => {
           if (!e.isIntersecting || e.intersectionRatio <= 0.5) {
-            unmountVideoPlayer(entry);
+            // A retired one is deleted on its own schedule (see dropVideos).
+            if (!entry.retired) unmountVideoPlayer(entry);
             obs.disconnect();
           }
         });
@@ -910,12 +915,59 @@
   // Reveals anyway if playback never starts (e.g. autoplay blocked), so the
   // frame can't stay invisible with YouTube's own play button hidden under it.
   const VIDEO_REVEAL_FALLBACK = 3000;
-  // Interactive the moment it's visible: a wheel over the iframe still
-  // scrolls the page, and onScrollFrame snaps from that, so there's no
-  // lock left to hold off for.
+  // Interactive the moment it's visible, under a barrier that steps aside as
+  // soon as the mouse moves across the video (see addVideoShield). A wheel
+  // that does reach the iframe still scrolls the page, and onScrollFrame
+  // feeds that to the reel -- the player that scroll is going to mustn't be
+  // deleted mid-scroll, though (see dropVideos).
   function showVideoFrame(el) {
     el.style.opacity = "";
     el.style.pointerEvents = "auto";
+  }
+
+  // ---- scroll barrier over the video ----
+  // A wheel over YouTube's iframe goes to YouTube first and only reaches the
+  // reel second-hand, as the page scroll YouTube passes on (onScrollFrame) --
+  // later and lumpier than a key press. A wheel gets used with the mouse at
+  // rest, though, and YouTube with the mouse moving, so a transparent
+  // .yt-shield over the iframe keeps the wheel on this page until the mouse
+  // actually moves across the video (or clicks it), then hands YouTube its
+  // hover controls and clicks as usual. Every new card's player starts with
+  // a fresh one, and the mouse leaving the video puts it back. It inherits
+  // the holder's pointer-events, so it only catches anything once the video
+  // is showing.
+  const SHIELD_MOVE_PX = 8;
+  function armShield(shield) {
+    shield.hidden = false;
+    shield._lastX = null;
+    shield._moved = 0;
+  }
+  function addVideoShield(holder) {
+    const shield = document.createElement("div");
+    shield.className = "yt-shield";
+    armShield(shield);
+    shield.addEventListener("mousemove", (e) => {
+      // Moving while the roulette covers the video isn't reaching for it.
+      if (reelZoomT > 0) return armShield(shield);
+      // Measured from positions rather than movementX, so every kind of
+      // mouse input counts the same.
+      if (shield._lastX !== null) {
+        shield._moved += Math.abs(e.clientX - shield._lastX) + Math.abs(e.clientY - shield._lastY);
+      }
+      shield._lastX = e.clientX;
+      shield._lastY = e.clientY;
+      if (shield._moved >= SHIELD_MOVE_PX) shield.hidden = true;
+    });
+    shield.addEventListener("click", () => { shield.hidden = true; });
+    holder._shield = shield;
+    if (!holder._shieldRearms) {
+      holder._shieldRearms = true;
+      // Over the bars beside the video, the mouse has left it.
+      holder.addEventListener("mousemove", (e) => {
+        if (e.target === holder && holder._shield && holder._shield.hidden) armShield(holder._shield);
+      });
+    }
+    holder.appendChild(shield);
   }
 
   // ---- cap how many players stay mounted at once ----
@@ -948,6 +1000,9 @@
   const entryByHolder = new Map();
 
   function unmountVideoPlayer(entry) {
+    // Already gone -- e.g. dropped by the reel before its own visibility
+    // observer fired.
+    if (entryByHolder.get(entry.holder) !== entry) return;
     const qIdx = mountedQueue.indexOf(entry);
     if (qIdx !== -1) mountedQueue.splice(qIdx, 1);
     if (currentlyPlaying === entry) currentlyPlaying = null;
@@ -1003,6 +1058,67 @@
       if (!target) break;
       unmountVideoPlayer(target);
     }
+  }
+
+  // ---- the reel deletes the video it leaves ----
+  // Runs as soon as the roulette covers the screen on a card change (see
+  // reelFrame), so no player outlives its card -- except one already shown,
+  // since the mouse could reach it: a scroll that starts over a player keeps
+  // being delivered to that player until the wheel rests (the browser
+  // latches it there, roughly half a second), so deleting it mid-scroll
+  // drops the rest of that scroll -- the likely cause of the scroll lock
+  // that embeds on other sites never hit, since nothing deletes their
+  // player. A shown one is hidden and stopped instead (retireEntry), still
+  // passing its scroll through to the page, and deleted once scrolling has
+  // stopped long enough.
+  const VIDEO_SCROLL_HOLD_MS = 700;
+  let retiredTimer = null;
+  function dropVideos() {
+    let retired = false;
+    for (const entry of [...mountedQueue]) {
+      if (entry.revealed) {
+        retireEntry(entry);
+        retired = true;
+      } else {
+        unmountVideoPlayer(entry);
+      }
+    }
+    // A mount still waiting on the YouTube API script has no entry yet.
+    for (const holder of [...videoSlot.querySelectorAll(".yt-frame")]) {
+      if (entryByHolder.has(holder)) continue;
+      holder._mountToken = (holder._mountToken || 0) + 1;
+      delete holder.dataset.customMounted;
+      delete holder._wantsActivate;
+      hideVideoFrame(holder);
+      if (holder._homeParent) holder._homeParent.appendChild(holder);
+    }
+    syncVideoSlotVisibility();
+    if (retired) {
+      clearTimeout(retiredTimer);
+      retiredTimer = setTimeout(deleteRetiredVideos, VIDEO_SCROLL_HOLD_MS);
+    }
+  }
+  function retireEntry(entry) {
+    entry.retired = true;
+    const qIdx = mountedQueue.indexOf(entry);
+    if (qIdx !== -1) mountedQueue.splice(qIdx, 1);
+    const pIdx = customPlayers.indexOf(entry.player);
+    if (pIdx !== -1) customPlayers.splice(pIdx, 1); // out of the sound toggle's reach
+    if (currentlyPlaying === entry) currentlyPlaying = null;
+    delete entry.holder._wantsActivate;
+    // Stopped, not just muted: one still playing in the background while the
+    // next card's player started up left every third new video stuck
+    // buffering at 0:00 when flipping between two cards.
+    if (typeof entry.player.stopVideo === "function") entry.player.stopVideo();
+    hideVideoFrame(entry.holder);
+  }
+  function deleteRetiredVideos() {
+    const quiet = performance.now() - reelLastInput;
+    if (quiet < VIDEO_SCROLL_HOLD_MS) {
+      retiredTimer = setTimeout(deleteRetiredVideos, VIDEO_SCROLL_HOLD_MS - quiet);
+      return;
+    }
+    for (const entry of [...entryByHolder.values()]) if (entry.retired) unmountVideoPlayer(entry);
   }
 
   // Splits "load the player" from "actually show and play it" -- lets a
@@ -1069,7 +1185,7 @@
   // with its holder already remounted for another video -- so it only acts
   // while it's still the live entry for that holder.
   function revealEntry(entry) {
-    if (entry.revealed || entryByHolder.get(entry.holder) !== entry) return;
+    if (entry.revealed || entry.retired || entryByHolder.get(entry.holder) !== entry) return;
     entry.revealed = true;
     showVideoFrame(entry.holder);
   }
@@ -1128,6 +1244,7 @@
 
     const playerEl = document.createElement("div");
     holder.appendChild(playerEl);
+    addVideoShield(holder); // after playerEl, so it stays over the iframe YT.Player swaps in for it
     // "the playback slider" -- see pauseAutoHideForHover's own comment.
     // Attached to the whole frame, not just a bottom strip: YouTube's own
     // native bar (controls:1 below) can surface anywhere the mouse rests
@@ -1203,7 +1320,9 @@
           }
         },
         onStateChange: (e) => {
-          if (e.data === 1) { // PLAYING
+          // A retired player is stopped, but a PLAYING from just before that
+          // can still arrive -- it mustn't take over from the one on screen.
+          if (e.data === 1 && !entry.retired) { // PLAYING
             setCurrentlyPlaying(entry);
             if (entry.activated) revealEntry(entry);
           }
@@ -1236,65 +1355,6 @@
     // comment): once mounted, the holder physically relocates into
     // #video-slot, outside this section entirely.
     section._videoHolder = holder;
-
-    // The wider-margin preload observer (600px head start, same as the
-    // image lazy-loader) that used to live here is removed, by request,
-    // alongside MAX_MOUNTED_VIDEOS dropping to 0 above -- see that
-    // constant's own comment for the memory-vs-stall tradeoff being
-    // traded back the other way. mountCustomPlayer/requestActivate/
-    // engagePlayer still support being called ahead of activation
-    // (nothing here assumes it can't happen), so bringing preloading back
-    // later is just re-adding that observer, not restructuring anything.
-    //
-    // Every video card (site-wide, not just one special-cased ID) gets
-    // the same auto-reveal-on-scroll-into-view treatment Concept Trailer
-    // III got first. Same 0.5 visibility threshold the rest of the app
-    // uses to mean "this is genuinely the thing on screen."
-    //
-    // Deliberately NOT one-shot (an earlier version disconnected after
-    // the first fire): now that mounted players can be evicted by
-    // enforceMountCap or reset by observeVideoVisibility, a card needs to
-    // be able to activate again later if scrolled back to, not just once
-    // ever.
-    //
-    // Reuses an already-preloading/preloaded entry via requestActivate()
-    // on the rare chance one exists (nothing preloads anymore, but a
-    // fast back-and-forth scroll could still leave one from a moment
-    // ago); falls back to mounting AND activating together otherwise --
-    // now the overwhelmingly common path, same as the original,
-    // pre-preload one-phase behavior.
-    // Cancel a still-pending activation the moment this card drops back
-    // below the threshold. Without this, a fast scroll-through schedules
-    // this same delayed callback on every card that briefly crossed 50%
-    // and lets ALL of them fire later regardless of whether the user is
-    // still anywhere near them by then -- the real cause of "premature
-    // blinds" reports: not a timing bug in the reveal animation itself,
-    // but a stale mount+autoplay firing late on a card already scrolled
-    // past. 450ms (up from an earlier, uncancelled 300ms) so a genuine
-    // fast scroll-through has more room to outrun it.
-    let activateTimer = null;
-    const activateObserver = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting && entry.intersectionRatio > 0.5) {
-            clearTimeout(activateTimer);
-            activateTimer = setTimeout(() => {
-              if (holder.dataset.customMounted) {
-                const e = entryByHolder.get(holder);
-                if (e) requestActivate(e);
-                else holder._wantsActivate = true; // still mid-preload-load; mountCustomPlayer's onReady picks this up
-              } else {
-                mountCustomPlayer(holder, true);
-              }
-            }, 450);
-          } else {
-            clearTimeout(activateTimer);
-          }
-        });
-      },
-      { threshold: 0.5 }
-    );
-    activateObserver.observe(section);
   });
 
   // ---- year watermark: slot-machine digit roll on actual year change ----
@@ -1549,6 +1609,10 @@
   function scrollPageTo(y) {
     selfScrollY = Math.max(0, Math.min(maxScroll, y));
     window.scrollTo(0, selfScrollY);
+    // The pump measures the next frame's movement from here, so scroll
+    // passing through from a video in that same frame isn't read as
+    // including this jump.
+    lastPumpY = selfScrollY;
   }
 
   // ---- one coalesced scroll pump ----
@@ -1655,7 +1719,9 @@
   const REEL_HANDOFF_TIMEOUT_MS = 1500; // zoom back in anyway if a card's art never finishes loading
   const REEL_PRELOAD_RADIUS = 20;
   const REEL_H = 1080;
-  const WHEEL_PX_PER_CARD = 350;
+  const WHEEL_STEP_PX = 100;            // one wheel notch's worth of scroll, until a real notch says otherwise (see wheelSteps)
+  const WHEEL_BURST_GAP_MS = 200;       // a wheel resting this long starts a fresh scroll, whose first notch moves at once
+  const FOREIGN_SETTLE_MS = 150;        // the page holds still until scroll passing through from a video has stopped this long
   const TOUCH_PX_PER_CARD = 420;
   // ?motion=full keeps the effect on for testing on a machine that asks for
   // reduced motion; otherwise that preference skips the overlay entirely.
@@ -1835,6 +1901,30 @@
   }
   const liveArtReady = (idx, now) => artReadyIdx === idx || now - artWaitSince > REEL_HANDOFF_TIMEOUT_MS;
 
+  // Starts the landing card's video the moment the reel knows where it's
+  // landing -- never for cards it only rolls past, so no YouTube frame gets
+  // created mid-roll, and no fixed wait before the video starts loading.
+  let videoActivatedIdx = -1;
+  let videosToDrop = false; // a card change started; reelFrame drops them once the roulette covers the screen
+  let lastForeignAt = -Infinity; // last scroll passed through from a video (see onForeignScroll)
+  function activateVideoFor(idx) {
+    if (idx === videoActivatedIdx) return;
+    videoActivatedIdx = idx;
+    const holder = idx > 0 ? eventEls[idx - 1]._videoHolder : null;
+    if (!holder) return;
+    // Landed straight back on a card whose video is still retiring (see
+    // dropVideos): start it over with a fresh player.
+    const stale = entryByHolder.get(holder);
+    if (stale && stale.retired) unmountVideoPlayer(stale);
+    if (holder.dataset.customMounted) {
+      const e = entryByHolder.get(holder);
+      if (e) requestActivate(e);
+      else holder._wantsActivate = true; // still loading; mountCustomPlayer's onReady picks this up
+    } else {
+      mountCustomPlayer(holder, true);
+    }
+  }
+
   function kickReel() {
     if (reelRunning) return;
     reelRunning = true;
@@ -1860,16 +1950,24 @@
     const settled = idle && reelGestureStart === null && Math.abs(reelTarget - reelPos) < 0.002;
     if (settled) reelPos = reelTarget;
     const landing = rClamp(Math.round(reelTarget), 0, reelLast);
+    // Moving the page while the browser is still smooth-scrolling a tick that
+    // passed through from a video risks the two fighting over it.
+    const pageCanMove = now - lastForeignAt > FOREIGN_SETTLE_MS;
 
     if (reelReducedMotion) {
       // No overlay: the page just changes card.
-      syncLivePage(landing, settled && Math.abs(scrollY - selfScrollY) > 1);
+      if (videosToDrop) { videosToDrop = false; dropVideos(); }
+      if (pageCanMove) syncLivePage(landing, settled && Math.abs(scrollY - selfScrollY) > 1);
+      if (idle && reelGestureStart === null) activateVideoFor(landing);
       if (settled) { applyState(landing); rememberCard(landing); reelRunning = false; }
       else requestAnimationFrame(reelFrame);
       return;
     }
 
-    if (reelZoomT >= 0.2 || settled) syncLivePage(landing, settled && Math.abs(scrollY - selfScrollY) > 1);
+    // The roulette is opaque from 0.2 -- the same point the page underneath may change.
+    if (videosToDrop && (reelZoomT >= 0.2 || idle)) { videosToDrop = false; dropVideos(); }
+    if ((reelZoomT >= 0.2 || settled) && pageCanMove) syncLivePage(landing, settled && Math.abs(scrollY - selfScrollY) > 1);
+    if (idle && reelGestureStart === null && reelSyncedIdx === landing) activateVideoFor(landing);
     if (settled) { applyState(landing); rememberCard(landing); prepareLiveArt(landing); }
 
     if (!settled) setReelZoom(1, now);
@@ -1886,7 +1984,11 @@
   }
 
   function reelNudge(delta) {
-    if (reelGestureStart === null) reelGestureStart = Math.round(reelTarget);
+    if (reelGestureStart === null) {
+      reelGestureStart = Math.round(reelTarget);
+      videoActivatedIdx = -1; // landing back on the same card has to be able to start its video again
+      videosToDrop = true;
+    }
     reelTarget = rClamp(reelTarget + delta, 0, reelLast);
     reelLastInput = performance.now();
     kickReel();
@@ -1897,6 +1999,8 @@
     if (Math.abs(idx - reelPos) > 3) reelPos = idx - Math.sign(idx - reelPos) * 3;
     reelTarget = idx;
     reelGestureStart = null;
+    videoActivatedIdx = -1;
+    videosToDrop = true;
     reelLastInput = performance.now();
     kickReel();
   }
@@ -2061,22 +2165,59 @@
 
   // A scroll that reached the page without passing through the handlers
   // below (see onScrollFrame) -- almost always a wheel over a YouTube iframe,
-  // which the browser passes through to the page. Every frame of that motion
-  // feeds the reel. The page is left alone until the reel settles and
-  // realigns it, rather than snapped back mid-motion, which fights the
-  // browser's own smooth scrolling of the tick.
+  // which the browser passes through to the page. It steps the reel by the
+  // same rule as the wheel itself (see wheelSteps). The page is left alone
+  // until that scroll has finished (see pageCanMove in reelFrame) rather than
+  // moved mid-motion, which fights the browser's own smooth scrolling of the
+  // tick.
   function onForeignScroll(deltaPx) {
-    if (!reelInput(deltaPx / WHEEL_PX_PER_CARD)) {
+    lastForeignAt = performance.now();
+    if (!wheelSteps(deltaPx)) {
       // Refused (the ending owns input right now), so no settle will come
       // along to realign the page.
       scrollPageTo(snapTargetTop(rClamp(reelSyncedIdx, 0, reelLast)));
     }
   }
 
+  // The wheel moves like the arrow keys: a scroll's first notch steps a whole
+  // card straight away, and each further notch's worth of scroll one more --
+  // rather than rolling the reel a fraction of a card per notch and only
+  // committing to a card once the wheel rests, which read as a sluggish
+  // two-stage move next to a key press. The notch size comes from the real
+  // wheel events seen here (WHEEL_STEP_PX until one arrives), so a mouse set
+  // to scroll more lines per notch still moves one card per notch.
+  let wheelNotchPx = WHEEL_STEP_PX, wheelAcc = 0, wheelDir = 0, wheelLastAt = -Infinity;
+  function wheelSteps(px) {
+    const dir = Math.sign(px);
+    if (!dir) return true;
+    const now = performance.now();
+    // Every bit of wheel input keeps the reel from counting as idle, stepping
+    // or not -- a player the scroll may still be passing through stays alive
+    // for it (see dropVideos).
+    reelLastInput = now;
+    let accepted = true;
+    if (now - wheelLastAt > WHEEL_BURST_GAP_MS || dir !== wheelDir) {
+      wheelDir = dir;
+      wheelAcc = Math.max(0, Math.abs(px) - wheelNotchPx);
+      accepted = reelInput(dir);
+    } else {
+      wheelAcc += Math.abs(px);
+    }
+    wheelLastAt = now;
+    while (accepted && wheelAcc >= wheelNotchPx) {
+      wheelAcc -= wheelNotchPx;
+      accepted = reelInput(dir);
+    }
+    return accepted;
+  }
+
   window.addEventListener("wheel", (e) => {
     e.preventDefault();
     const unit = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? innerHeight : 1;
-    reelInput((e.deltaY * unit) / WHEEL_PX_PER_CARD);
+    const px = e.deltaY * unit;
+    // A notch-sized event sets the step; a touchpad's stream of small ones doesn't.
+    if (Math.abs(px) >= 40) wheelNotchPx = Math.abs(px);
+    wheelSteps(px);
   }, { passive: false });
 
   let reelTouchY = null;
@@ -2182,6 +2323,7 @@
   applyState(reelTarget);
   syncLivePage(reelTarget, true);
   rememberCard(reelTarget);
+  activateVideoFor(reelTarget);
   rebuildReel();
   renderReel();
   updateDisplay(); // no 'scroll' event fires on load if scrollY is unchanged

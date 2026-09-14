@@ -795,7 +795,8 @@ body.chrome-hidden #year-watermark{
    frame to mask YouTube's native play/pause icon flash) used to live
    here -- removed per explicit request, its own fade in/out read as two
    flickers of its own. See git history if it's worth revisiting. */
-.yt-frame iframe{
+.yt-frame iframe,
+.yt-frame .yt-shield{
   /* Contain, not cover or fit-height -- two earlier versions each
      oversized one axis to fill BOTH dimensions with no visible bars
      (cover: crops top/bottom on a wide window; fit-height: crops the
@@ -826,6 +827,10 @@ body.chrome-hidden #year-watermark{
   transform: translate(-50%, -50%);
   border: 0;
 }
+/* .yt-shield shares the iframe's box above: app.js's scroll barrier (see
+   addVideoShield). Transparent, and later in the DOM so it sits on top. No
+   pointer-events of its own -- it inherits the holder's, so it only catches
+   the mouse once the video is showing. */
 
 /* .yt-load-btn and friends used to live here (the click-to-load button
    every video card showed before mounting) -- removed now that every
