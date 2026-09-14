@@ -1715,7 +1715,7 @@
   // a time, and only while the overlay fully covers it -- video mounting,
   // the ending swipe, the counter and the year rail all keep running off
   // real scroll position exactly as before.
-  const REEL = { curve: 16, cardSize: 0.44, gap: 110, zoomOutMs: 380, zoomInMs: 650, roll: 9, holdSpeed: 4, dim: 0.4 };
+  const REEL = { curve: 16, cardSize: 0.44, gap: 110, zoomOutMs: 380, zoomInMs: 650, roll: 9, holdSpeed: 4, dim: 0.55, centerDim: 0.15 }; // cards off-center at 45% brightness, the center one at 85%
   const REEL_IDLE_MS = 170;             // no input for this long = the gesture is over
   const REEL_OUT_DWELL_MS = 120;        // minimum time fully zoomed out, so one tick doesn't read as a flicker
   const REEL_HANDOFF_TIMEOUT_MS = 1500; // zoom back in anyway if a card's art never finishes loading
@@ -1796,6 +1796,7 @@
     reelWorld.style.setProperty("--reel-h", REEL_H + "px");
     reelStage.style.perspective = Math.round(innerHeight * 1.6) + "px";
     reelSpot.style.boxShadow = `0 0 0 300vmax rgba(5,7,10,${REEL.dim})`;
+    reelSpot.style.background = `rgba(5,7,10,${REEL.centerDim})`;
     const flat = Math.ceil((innerHeight * 1.2) / (reelPitch() * reelZoomOut()) / 2) + 3;
     reelRadius = REEL.curve > 0.5 ? Math.min(flat, Math.floor(85 / REEL.curve)) : flat;
     syncReelCells(true);
