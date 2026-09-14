@@ -1829,7 +1829,10 @@
     reelSpot.style.width = reelW * z + "px";
     reelSpot.style.height = REEL_H * z + "px";
     reelSpot.style.transform = `translate(${vw / 2 - (reelW * z) / 2}px, ${vh / 2 - (REEL_H * z) / 2}px)`;
-    reelSpot.style.opacity = rClamp((reelZoomT - 0.15) / 0.5, 0, 1).toFixed(3);
+    // Fades with the stage itself. Fading out earlier left the still-opaque
+    // reel card at full brightness for a moment just before landing --
+    // brighter than both the reel's shade and the card landed on.
+    reelSpot.style.opacity = reelStage.style.opacity;
     reelHud.style.opacity = rClamp((reelZoomT - 0.4) / 0.4, 0, 1).toFixed(3);
     const cur = rClamp(Math.round(reelPos), 0, reelLast);
     if (cur !== reelHudFor) {
