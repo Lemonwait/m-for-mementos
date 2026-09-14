@@ -1723,9 +1723,8 @@
   const WHEEL_BURST_GAP_MS = 200;       // a wheel resting this long starts a fresh scroll, whose first notch moves at once
   const FOREIGN_SETTLE_MS = 150;        // the page holds still until scroll passing through from a video has stopped this long
   const TOUCH_PX_PER_CARD = 420;
-  // ?motion=full keeps the effect on for testing on a machine that asks for
-  // reduced motion; otherwise that preference skips the overlay entirely.
-  const reelReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches && !/[?&]motion=full\b/.test(location.search);
+  // The roulette plays on every card change, even on a device that asks for
+  // reduced motion -- by request; it used to skip the overlay there.
 
   const reelStage = document.getElementById("reel-stage");
   const reelWorld = document.getElementById("reel-world");
@@ -1946,23 +1945,13 @@
       reelTarget = rClamp(Math.abs(d) < 1 && Math.abs(d) > 0.02 ? reelGestureStart + Math.sign(d) : Math.round(reelTarget), 0, reelLast);
       reelGestureStart = null;
     }
-    reelPos = reelReducedMotion ? reelTarget : reelPos + (reelTarget - reelPos) * (1 - Math.exp(-dt * REEL.roll));
+    reelPos += (reelTarget - reelPos) * (1 - Math.exp(-dt * REEL.roll));
     const settled = idle && reelGestureStart === null && Math.abs(reelTarget - reelPos) < 0.002;
     if (settled) reelPos = reelTarget;
     const landing = rClamp(Math.round(reelTarget), 0, reelLast);
     // Moving the page while the browser is still smooth-scrolling a tick that
     // passed through from a video risks the two fighting over it.
     const pageCanMove = now - lastForeignAt > FOREIGN_SETTLE_MS;
-
-    if (reelReducedMotion) {
-      // No overlay: the page just changes card.
-      if (videosToDrop) { videosToDrop = false; dropVideos(); }
-      if (pageCanMove) syncLivePage(landing, settled && Math.abs(scrollY - selfScrollY) > 1);
-      if (idle && reelGestureStart === null) activateVideoFor(landing);
-      if (settled) { applyState(landing); rememberCard(landing); reelRunning = false; }
-      else requestAnimationFrame(reelFrame);
-      return;
-    }
 
     // The roulette is opaque from 0.2 -- the same point the page underneath may change.
     if (videosToDrop && (reelZoomT >= 0.2 || idle)) { videosToDrop = false; dropVideos(); }
