@@ -583,8 +583,10 @@ body.chrome-hidden #year-rail{
      (it's outside #events), and tied z-index resolves by DOM order, later
      wins. That let a fully-opaque active art layer paint completely over
      this once things settled, so it only ever peeked through briefly
-     during a transition's opacity blend. */
-  z-index: 2;
+     during a transition's opacity blend. Above #video-slot's 2 as well,
+     for the same reason: the slot also comes later in the DOM, so a
+     playing video covered the year entirely. */
+  z-index: 3;
   display: flex;
   pointer-events: none;
   user-select: none;
@@ -752,8 +754,9 @@ body.chrome-hidden #year-watermark{
    one of the 131 always-present, identically-positioned .event-media
    elements every event pre-renders. z-index:2 -- unambiguously above
    .event-media's own 0/1 (whichever card is active), unambiguously
-   below .event-body's active 3 and the top bar's 100 -- puts the video
-   back exactly where it visually sat before this existed, just no
+   below the year watermark's 3, .event-body's active 4 and the top
+   bar's 100 -- puts the video back exactly where it visually sat
+   before this existed, just no
    longer nested inside the thing that broke it. pointer-events:none
    with .yt-frame (a child, once one is actually mounted here) supplying
    its own auto -- same "empty parent shouldn't catch stray clicks"
@@ -937,11 +940,11 @@ body.chrome-hidden .event.active .event-body{
 .event.active .event-body{
   opacity: 1;
   transform: translateY(0);
-  /* Unambiguously above the watermark's z-index:2 — not relying on the
+  /* Unambiguously above the watermark's z-index:3 — not relying on the
      DOM-order tiebreak (which happens to also favor this, since #events
      comes after #year-watermark, but that's a fragile thing to depend on
      given how much trouble a tied/ambiguous z-index caused already). */
-  z-index: 3;
+  z-index: 4;
   /* No transition, same as .event-media -- text swaps in the same
      instant as the art, all at once. */
 }
@@ -1021,7 +1024,7 @@ body.chrome-hidden .event.active .event-body{
    reaches wherever ITS OWN text/tags render. Where the active card's
    content happens to be shorter/narrower than another (inactive) card's
    at that same screen position, hit-testing fell through PAST the
-   active card's z-index:3 (nothing of its own occupies that pixel) to
+   active card's z-index:4 (nothing of its own occupies that pixel) to
    whatever inactive card's identically-positioned, unconditionally-
    clickable content was sitting underneath at z-index:1 -- confirmed
    live as an invisible tag-chip belonging to a completely different,
@@ -1212,7 +1215,7 @@ button.tag-chip:hover{
 #outro{
   position: fixed;
   inset: 0;
-  z-index: 4;
+  z-index: 5; /* over the active card's text (4), which it wipes across */
   display: flex;
   flex-direction: column;
   align-items: center;
