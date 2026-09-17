@@ -481,11 +481,11 @@ body.side-rails .topbar-right{
   flex-direction: column;
   margin-top: 0;
 }
+/* Hidden here for now: each card's own text and the roulette caption already
+   carry the number, and the caption's banner runs along the bottom edge
+   where the counter sat (bottom of the left bar -- see git history). */
 body.side-rails #counter{
-  position: fixed;
-  left: calc(var(--bar-x) / 2);
-  bottom: 24px;
-  transform: translateX(-50%);
+  display: none;
 }
 /* The flyouts open to the left of their button, since the next button in
    the column sits where they used to open. */
@@ -1255,10 +1255,10 @@ button.tag-chip:hover{
   opacity: 0;
   outline: 1px solid rgba(0,176,255,0.55);
 }
-/* The roulette's caption: a full-width dark banner carrying the card's
-   name and number, with the year sitting half on it and half over the
-   reel. Each line keeps its height while empty (the hero card has no year
-   or number), so the banner never changes size. */
+/* The roulette's caption: a full-width dark banner along the bottom edge,
+   carrying the card's name and number, with the year sitting half on it
+   and half over the reel. Each line keeps its height while empty (the hero
+   card has no year or number), so the banner never changes size. */
 #reel-hud{
   --hud-year: clamp(56px, 8vw, 96px);
   /* From Hypergryph's official Arknights site: its dark gray and its
@@ -1269,7 +1269,7 @@ button.tag-chip:hover{
   position: fixed;
   left: 0;
   right: 0;
-  bottom: 5vh;
+  bottom: 0;
   z-index: 52;
   pointer-events: none;
   visibility: hidden;
