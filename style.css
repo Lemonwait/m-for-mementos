@@ -1150,40 +1150,72 @@ button.tag-chip:hover{
   opacity: 0;
   outline: 1px solid rgba(0,176,255,0.55);
 }
+/* The roulette's caption: a full-width dark banner carrying the card's
+   name and number, with the year sitting half on it and half over the
+   reel. Each line keeps its height while empty (the hero card has no year
+   or number), so the banner never changes size. */
 #reel-hud{
+  --hud-year: clamp(56px, 8vw, 96px);
+  --hud-band: rgba(18,19,22,0.94);
   position: fixed;
-  left: 50%;
+  left: 0;
+  right: 0;
   bottom: 5vh;
-  transform: translateX(-50%);
   z-index: 52;
   pointer-events: none;
   visibility: hidden;
   opacity: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-bottom: 16px;
   text-align: center;
   white-space: nowrap;
 }
+#reel-hud::before{
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  /* Oswald's digits are centered about 0.55em down a 1em line. */
+  top: calc(var(--hud-year) * 0.55);
+  bottom: 0;
+  z-index: -1;
+  background: var(--hud-band);
+}
 #reel-hud .ry{
   display: block;
+  height: 1em;
   font-family: var(--font-display);
   font-weight: 700;
-  font-size: clamp(40px, 7vw, 84px);
+  font-size: var(--hud-year);
   line-height: 1;
   letter-spacing: 0.04em;
-  color: rgba(238,242,246,0.14);
-}
-#reel-hud .rl{
-  font-family: var(--font-display);
-  font-size: 12px;
-  letter-spacing: 0.2em;
-  color: var(--accent);
+  color: var(--ink);
 }
 #reel-hud .rn{
+  display: block;
+  min-height: 1.4em;
+  max-width: 92vw;
+  margin-top: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-family: var(--font-display);
-  font-size: 13px;
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 1.4;
   letter-spacing: 0.08em;
   color: var(--ink);
-  margin-left: 10px;
   text-transform: uppercase;
+}
+#reel-hud .rl{
+  display: block;
+  min-height: 1.5em;
+  font-family: var(--font-display);
+  font-size: 12px;
+  line-height: 1.5;
+  letter-spacing: 0.2em;
+  color: var(--accent);
 }
 
 /* ---------- outro ---------- */
