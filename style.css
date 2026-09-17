@@ -365,11 +365,29 @@ body.cursor-hidden *{
   background: var(--accent-dim);
   border-color: var(--accent);
 }
-#sound-toggle .bar{
-  fill: currentColor;
-  transform-origin: center bottom;
-  transition: fill 0.2s ease;
+/* The equalizer icon is drawn with HTML boxes, not SVG shapes: the browser
+   runs a transform animation on an HTML element on the GPU, but on an SVG
+   shape it costs a style recalc and a layout on the main thread every
+   frame -- DevTools showed 40-80 of each per second while it played. Same
+   24-unit drawing as the old SVG, at 16px (2/3 scale). */
+.sound-bars{
+  position: relative;
+  display: block;
+  width: 16px;
+  height: 16px;
 }
+#sound-toggle .bar{
+  position: absolute;
+  width: 2px;
+  border-radius: 0.67px;
+  background: currentColor;
+}
+/* Each bar scales toward the icon's bottom edge, as the SVG ones did, so
+   every origin sits 16px below the icon's top. */
+#sound-toggle .bar-1{ left: 1.33px; top: 6px; height: 4px; transform-origin: 50% 10px; }
+#sound-toggle .bar-2{ left: 5.33px; top: 3.33px; height: 9.33px; transform-origin: 50% 12.67px; }
+#sound-toggle .bar-3{ left: 9.33px; top: 1.33px; height: 13.33px; transform-origin: 50% 14.67px; }
+#sound-toggle .bar-4{ left: 12.67px; top: 4.67px; height: 6.67px; transform-origin: 50% 11.33px; }
 /* Off (default): flat, dim bars, no motion. */
 #sound-toggle[aria-pressed="false"] .bar{
   opacity: 0.5;
@@ -387,11 +405,8 @@ body.cursor-hidden *{
 #sound-toggle[aria-pressed="true"] .bar-2{ animation-delay: -0.3s; }
 #sound-toggle[aria-pressed="true"] .bar-3{ animation-delay: -0.9s; }
 #sound-toggle[aria-pressed="true"] .bar-4{ animation-delay: -0.15s; }
-/* SVG shapes animate on the main thread (only HTML elements get GPU
-   transform animations), so this loop costs a style recalc and layout
-   every frame -- the likely source of the ~47 of each per second DevTools
-   showed on an otherwise idle page. Paused while auto-hide has the button
-   invisible; it resumes when hovering the button row reveals it. */
+/* No point animating what can't be seen: paused while auto-hide has the
+   button invisible, resumed when hovering the button row reveals it. */
 body.chrome-hidden .topbar-right:not(:hover) #sound-toggle .bar{
   animation-play-state: paused;
 }

@@ -589,8 +589,11 @@
   // mouse resting ANYWHERE on the page, not just over this one control.
   window.addEventListener("mousemove", () => {
     if (!(chromeMode in IDLE_DELAYS)) return;
-    document.body.classList.remove("cursor-hidden");
-    setChromeHidden(false);
+    // This runs on every mouse move, so it only touches the page when
+    // something is actually hidden -- redoing the class and attribute writes
+    // each time showed up as extra style recalcs while the mouse moved.
+    if (document.body.classList.contains("cursor-hidden")) document.body.classList.remove("cursor-hidden");
+    if (document.body.classList.contains("chrome-hidden")) setChromeHidden(false);
     // Skipped while parked in one of the two pause zones (see
     // hoveringPauseZone's own comment) -- rearming here on every
     // stray pixel of movement is exactly what silently undid the
