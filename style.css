@@ -68,18 +68,6 @@ body{
 
 ::selection{ background: var(--accent); color: #001420; }
 
-/* ---------- progress bar ---------- */
-#progress-bar{
-  position: fixed;
-  top: 0; left: 0;
-  height: 2px;
-  width: 0%;
-  background: var(--accent);
-  box-shadow: 0 0 8px var(--accent);
-  z-index: 200;
-  transition: width 0.08s linear;
-}
-
 /* ---------- top bar ---------- */
 #top-bar{
   position: fixed;
@@ -1219,7 +1207,6 @@ button.tag-chip:hover{
   backface-visibility: hidden;
   background: var(--panel);
   box-shadow: 0 50px 90px rgba(0,0,0,0.55);
-  outline: 2px solid rgba(255,255,255,0.07);
 }
 .reel-card img{
   width: 100%;
@@ -1243,7 +1230,8 @@ button.tag-chip:hover{
   color: var(--ink);
 }
 /* A window cut out of a dim overlay over the card in the middle of the
-   reel -- the roulette's pointer. The overlay (its box-shadow) and the
+   reel -- the roulette's pointer, marked only by being brighter than the
+   cards around it (no outline). The overlay (its box-shadow) and the
    window's own lighter shade (its background) are both set from app.js. */
 #reel-spot{
   position: fixed;
@@ -1253,7 +1241,6 @@ button.tag-chip:hover{
   pointer-events: none;
   visibility: hidden;
   opacity: 0;
-  outline: 1px solid rgba(0,176,255,0.55);
 }
 /* The roulette's caption: a full-width dark banner along the bottom edge,
    carrying the card's name and number, with the year sitting half on it
@@ -1292,8 +1279,26 @@ button.tag-chip:hover{
   z-index: -1;
   background: var(--hud-band);
 }
+/* The progress bar runs along the banner's top edge, under the year. Its
+   width follows the reel (renderReel in app.js), so it only shows while the
+   roulette does. */
+#progress-bar{
+  position: absolute;
+  left: 0;
+  top: calc(var(--hud-year) * 0.55 - 1px);
+  height: 2px;
+  width: 0%;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+}
+/* Flex, so the rolling digit slots (rollDigits in app.js) line up at the
+   top exactly where plain text sits. The 2px black outline keeps the top
+   half readable over bright pictures. Stacked above the progress bar. */
 #reel-hud .ry{
-  display: block;
+  position: relative;
+  z-index: 1;
+  display: flex;
+  justify-content: center;
   height: 1em;
   font-family: var(--font-display);
   font-weight: 700;
@@ -1301,6 +1306,16 @@ button.tag-chip:hover{
   line-height: 1;
   letter-spacing: 0.04em;
   color: var(--ink);
+  text-shadow:
+    -2px -2px 0 #000, 0 -2px 0 #000, 2px -2px 0 #000,
+    -2px 0 0 #000, 2px 0 0 #000,
+    -2px 2px 0 #000, 0 2px 0 #000, 2px 2px 0 #000;
+}
+/* Each digit slot clips its roll; this widens the clip a little each side
+   (without moving anything) so the outline isn't cut off. */
+#reel-hud .year-digit{
+  padding: 0 0.04em;
+  margin: 0 -0.04em;
 }
 #reel-hud .rn{
   display: block;

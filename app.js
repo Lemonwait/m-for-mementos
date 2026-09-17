@@ -1398,16 +1398,11 @@
   });
 
   // ---- year watermark: slot-machine digit roll on actual year change ----
-  const yearWatermarkEl = document.getElementById("year-watermark");
-  let shownYear = null;
-  function renderYearWatermark(newYear) {
-    const newStr = String(newYear);
-    const isFirstRender = shownYear === null;
-    const oldStr = isFirstRender ? newStr : String(shownYear);
-    if (!isFirstRender && oldStr === newStr) return; // same year — leave as-is
-    shownYear = newYear;
-
-    yearWatermarkEl.innerHTML = "";
+  // Renders newStr into el one digit per slot; each digit that differs from
+  // oldStr slides up from the old value to the new one (.year-digit and
+  // .digit-roll in style.css). Also used by the roulette caption's year.
+  function rollDigits(el, newStr, oldStr) {
+    el.innerHTML = "";
     for (let i = 0; i < newStr.length; i++) {
       const oldChar = oldStr[i] ?? newStr[i];
       const newChar = newStr[i];
@@ -1418,11 +1413,22 @@
       } else {
         slot.innerHTML = `<span class="digit-roll"><span class="d-old">${oldChar}</span><span class="d-new">${newChar}</span></span>`;
       }
-      yearWatermarkEl.appendChild(slot);
+      el.appendChild(slot);
     }
     requestAnimationFrame(() => {
-      yearWatermarkEl.querySelectorAll(".digit-roll").forEach((r) => r.classList.add("rolling"));
+      el.querySelectorAll(".digit-roll").forEach((r) => r.classList.add("rolling"));
     });
+  }
+
+  const yearWatermarkEl = document.getElementById("year-watermark");
+  let shownYear = null;
+  function renderYearWatermark(newYear) {
+    const newStr = String(newYear);
+    const isFirstRender = shownYear === null;
+    const oldStr = isFirstRender ? newStr : String(shownYear);
+    if (!isFirstRender && oldStr === newStr) return; // same year — leave as-is
+    shownYear = newYear;
+    rollDigits(yearWatermarkEl, newStr, oldStr);
   }
 
   // ---- single source of truth: a plain slide index, never inferred from
@@ -1623,13 +1629,14 @@
     renderYearWatermark(year);
     yearWatermarkEl.classList.remove("hidden");
   }
-  // No 'scroll' listener of its own anymore -- updateDisplay and
-  // updateProgress are both driven by the single coalesced pump below.
+  // No 'scroll' listener of its own anymore -- updateDisplay is driven by
+  // the single coalesced pump below.
 
-  // ---- scroll progress bar ----
+  // ---- scroll range ----
   // doc.scrollHeight is itself a layout-forcing read, so it's cached the
   // same way the card geometry above is: it only changes when the
-  // document does, not on every tick.
+  // document does, not on every tick. (The progress bar used to be sized
+  // from this; it now follows the reel instead -- see renderReel.)
   let maxScroll = 0;
   function measureScrollRange() {
     const doc = document.documentElement;
@@ -1637,11 +1644,6 @@
   }
   measureScrollRange();
   window.addEventListener("load", measureScrollRange);
-  function updateProgress() {
-    const pct = maxScroll > 0 ? (window.scrollY / maxScroll) * 100 : 0;
-    progressBar.style.width = pct + "%";
-  }
-  updateProgress();
 
   // Every scroll this file makes goes through here, so the pump below can
   // tell its own movement apart from movement it didn't make.
@@ -1657,12 +1659,12 @@
 
   // ---- one coalesced scroll pump ----
   // Two separate 'scroll' listeners used to run per tick: one that READ
-  // layout (updateDisplay) and one that WROTE style (updateProgress).
-  // Browsers fire scroll events faster than they paint, so that was
-  // several full read/write cycles per frame, each one invalidating the
-  // layout the next one had to re-resolve. One rAF-coalesced callback
-  // runs both AT MOST once per frame, reads first, writes second -- so
-  // the work is capped at the refresh rate and never interleaved.
+  // layout (updateDisplay) and one that WROTE style (the old scroll-sized
+  // progress bar). Browsers fire scroll events faster than they paint, so
+  // that was several full read/write cycles per frame, each one
+  // invalidating the layout the next one had to re-resolve. One
+  // rAF-coalesced callback now runs AT MOST once per frame, so the work is
+  // capped at the refresh rate.
   let scrollPumpQueued = false;
   let lastPumpY = window.scrollY;
   function onScrollFrame() {
@@ -1679,8 +1681,7 @@
     if (y !== prevY && Math.abs(y - selfScrollY) > 2) {
       onForeignScroll(y - prevY);
     }
-    updateDisplay();  // reads (cached geometry + scrollY)
-    updateProgress(); // writes
+    updateDisplay(); // reads (cached geometry + scrollY)
   }
   window.addEventListener(
     "scroll",
@@ -1778,7 +1779,7 @@
   let reelPos = 0, reelTarget = 0, reelGestureStart = null, reelHeldDir = 0;
   let reelLastInput = -1e9;
   let reelZoomT = 0, reelZoomFrom = 0, reelZoomTo = 0, reelZoomStart = 0, reelZoomDur = 1, reelOutReadyAt = 0;
-  let reelRunning = false, reelLastFrame = 0, reelSyncedIdx = -1, reelHudFor = -1;
+  let reelRunning = false, reelLastFrame = 0, reelSyncedIdx = -1, reelHudFor = -1, reelHudYear = "";
   // 16:9 cards, the same shape as the mockup. Zoomed all the way in, a card
   // covers the viewport the way the real art layer's object-fit:cover does:
   // scaled until it covers, centered.
@@ -1878,11 +1879,22 @@
     // brighter than both the reel's shade and the card landed on.
     reelSpot.style.opacity = reelStage.style.opacity;
     reelHud.style.opacity = rClamp((reelZoomT - 0.4) / 0.4, 0, 1).toFixed(3);
+    // The progress bar lives on the caption's banner and follows the reel
+    // itself, so it glides along with the cards as they roll.
+    progressBar.style.width = (reelLast > 0 ? (reelPos / reelLast) * 100 : 0).toFixed(2) + "%";
     const cur = rClamp(Math.round(reelPos), 0, reelLast);
     if (cur !== reelHudFor) {
       reelHudFor = cur;
       const m = cur > 0 ? MEMENTOS[cur - 1] : null;
-      reelHud.querySelector(".ry").textContent = m ? m.year : "";
+      const year = m ? String(m.year) : "";
+      if (year !== reelHudYear) {
+        const ry = reelHud.querySelector(".ry");
+        // Rolls between two years, like the page's own year; to or from the
+        // hero card (no year) it just appears or goes.
+        if (year && reelHudYear) rollDigits(ry, year, reelHudYear);
+        else ry.textContent = year;
+        reelHudYear = year;
+      }
       reelHud.querySelector(".rl").innerHTML = m ? countHtml(cur) : "";
       reelHud.querySelector(".rn").textContent = m ? m.name : "M FOR MEMENTOS";
     }
@@ -2352,7 +2364,6 @@
       rebuildReel();
       reelSyncedIdx = -1;
       syncLivePage(rClamp(Math.round(reelTarget), 0, reelLast));
-      updateProgress();
       renderReel();
     });
   });
