@@ -1939,6 +1939,26 @@
     }
   }
 
+  // ---- let go of far-away card pictures ----
+  // Each card's picture is a full-size still that costs about 8MB once the
+  // browser decodes it, and they used to pile up: every card visited kept
+  // its own for the rest of the session (measured: 53 loaded after 40 card
+  // changes, on the way past a gigabyte across the whole archive). Only the
+  // cards around the one in view keep theirs now. The rest drop back to
+  // their data-src and reload (from cache, normally) when approached again
+  // -- prepareLiveArt below waits for that before the roulette hands over,
+  // so a returning card still can't flash in half-drawn.
+  const ART_KEEP_RADIUS = 4;
+  function releaseDistantArt(idx) {
+    eventEls.forEach((section, i) => {
+      if (Math.abs(i + 1 - idx) <= ART_KEEP_RADIUS) return;
+      const img = section.querySelector(".event-media img");
+      if (!img || !img.getAttribute("src")) return;
+      img.removeAttribute("src");
+      img.classList.remove("loaded");
+    });
+  }
+
   // The zoom-in waits on this: the landing card's real <img> loaded, shown
   // without its own fade-in, and decoded.
   let artWaitIdx = -1, artReadyIdx = -1, artWaitSince = 0;
@@ -1959,6 +1979,7 @@
     if (!img.getAttribute("src")) img.src = img.dataset.src;
     if (img.complete && img.naturalWidth) finish();
     else img.addEventListener("load", finish, { once: true });
+    releaseDistantArt(idx);
   }
   const liveArtReady = (idx, now) => artReadyIdx === idx || now - artWaitSince > REEL_HANDOFF_TIMEOUT_MS;
 
