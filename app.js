@@ -1849,16 +1849,27 @@
   // Card d positions from the center, laid on a drum whose arc between cards
   // is one pitch: spacing reads like a flat strip at the middle while the
   // reel bends away top and bottom.
-  function placeReelCard(cell, d) {
+  function placeReelCard(cell, d, worldScale, persp) {
     const step = (REEL.curve * Math.PI) / 180;
+    const theta = d * step;
     let y = d * reelPitch(), z = 0, ang = 0;
     if (step > 0.009) {
-      const theta = d * step, r = reelPitch() / step;
+      const r = reelPitch() / step;
       y = r * Math.sin(theta);
       z = r * (Math.cos(theta) - 1);
       ang = (-theta * 180) / Math.PI;
     }
-    cell.el.style.visibility = Math.abs(d * REEL.curve) > 88 ? "hidden" : "";
+    // Cards further around the drum project clean off the screen, and a
+    // hidden layer is one the browser never rasterizes. Every card kept
+    // visible is a near-full-screen, steeply tilted layer: with all of them
+    // live, the GPU process tripled whenever the roulette was up (1.07GB,
+    // against 307MB on a landed card). The half-card margin keeps the next
+    // ones in before they can be seen.
+    const shrink = persp / Math.max(1, persp - z * worldScale); // perspective at this depth
+    const fromMiddle = Math.abs(y * worldScale * shrink);
+    const halfCard = (REEL_H / 2) * worldScale * shrink * Math.abs(Math.cos(theta));
+    const margin = REEL_H * worldScale * 0.5;
+    cell.el.style.visibility = fromMiddle - halfCard > innerHeight / 2 + margin ? "hidden" : "";
     cell.el.style.transform = `translate3d(${-reelW / 2}px, ${y - REEL_H / 2}px, ${z}px) rotateX(${ang}deg)`;
   }
 
@@ -1867,7 +1878,8 @@
     const zIn = reelZoomIn(), zOut = reelZoomOut();
     const z = Math.exp(Math.log(zIn) + (Math.log(zOut) - Math.log(zIn)) * reelZoomT);
     reelWorld.style.transform = `translate(${vw / 2}px, ${vh / 2}px) scale3d(${z}, ${z}, ${z})`;
-    for (const cell of reelCells.values()) placeReelCard(cell, cell.i - reelPos);
+    const persp = Math.round(vh * 1.6); // matches rebuildReel's perspective
+    for (const cell of reelCells.values()) placeReelCard(cell, cell.i - reelPos, z, persp);
     const vis = reelZoomT > 0 ? "visible" : "hidden";
     reelStage.style.visibility = reelSpot.style.visibility = reelHud.style.visibility = vis;
     reelStage.style.opacity = rClamp(reelZoomT * 5, 0, 1).toFixed(3);
