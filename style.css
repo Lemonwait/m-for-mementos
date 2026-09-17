@@ -994,6 +994,7 @@ body.chrome-hidden .event.active .event-body{
   margin: 0 0 18px;
   max-width: 22ch;
   width: fit-content;
+  white-space: pre-line; /* keeps a line break typed into the sheet's cell */
 }
 .event-quote::before{ content: "“"; color: var(--accent); }
 .event-quote::after{ content: "”"; color: var(--accent); }

@@ -139,7 +139,7 @@
       <div class="event-body">
         <p class="event-index">${String(m.i + 1).padStart(3, "0")} / ${String(total).padStart(3, "0")}</p>
         <p class="event-date">${escapeHtml(formatDateShort(m.date))}</p>
-        <p class="event-quote">${escapeHtml(m.favorText)}</p>
+        ${m.favorText ? `<p class="event-quote">${escapeHtml(m.favorText)}</p>` : ""}
         <h2 class="event-name">${escapeHtml(m.name)}</h2>
         <div class="event-tags">${tagsHtml}</div>
       </div>
