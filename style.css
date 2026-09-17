@@ -143,15 +143,32 @@ body.chrome-hidden .topbar-right:hover #sound-toggle{
   color: var(--ink-dim);
   margin-top: 2px;
 }
+/* The two numbers of a "NNN / total" (countHtml in app.js) sit in equal
+   fixed-width slots either side of the slash, so neither Oswald's uneven
+   digit widths nor the number itself can move the slash or resize the box.
+   Each container sets its own slot width, to fit its widest three digits. */
+.n-cur{ text-align: right; }
+.n-all{ text-align: left; }
+.n-sep{ padding: 0 0.3em; }
+
 #counter{
+  display: inline-flex;
+  align-items: baseline;
   font-family: var(--font-display);
   font-size: 12px;
   letter-spacing: 0.14em;
   color: var(--accent);
   border: 1px solid var(--accent-dim);
-  padding: 5px 12px;
+  /* The extra left padding offsets the letter-spacing trailing the slash,
+     which would otherwise sit a hair left of center. */
+  padding: 5px 12px 5px calc(12px + 0.14em);
   border-radius: 2px;
   background: rgba(0,176,255,0.06);
+}
+/* "000" is the widest three digits, 1.97em in this spacing. */
+#counter .n-cur,
+#counter .n-all{
+  width: 2.05em;
 }
 .topbar-right{
   display: flex;
@@ -367,6 +384,14 @@ body.cursor-hidden *{
 #sound-toggle[aria-pressed="true"] .bar-2{ animation-delay: -0.3s; }
 #sound-toggle[aria-pressed="true"] .bar-3{ animation-delay: -0.9s; }
 #sound-toggle[aria-pressed="true"] .bar-4{ animation-delay: -0.15s; }
+/* SVG shapes animate on the main thread (only HTML elements get GPU
+   transform animations), so this loop costs a style recalc and layout
+   every frame -- the likely source of the ~47 of each per second DevTools
+   showed on an otherwise idle page. Paused while auto-hide has the button
+   invisible; it resumes when hovering the button row reveals it. */
+body.chrome-hidden .topbar-right:not(:hover) #sound-toggle .bar{
+  animation-play-state: paused;
+}
 @keyframes sound-bounce{
   0%, 100% { transform: scaleY(0.55); }
   50% { transform: scaleY(1); }
@@ -1156,7 +1181,11 @@ button.tag-chip:hover{
    or number), so the banner never changes size. */
 #reel-hud{
   --hud-year: clamp(56px, 8vw, 96px);
-  --hud-band: rgba(18,19,22,0.94);
+  /* From Hypergryph's official Arknights site: its dark gray and its
+     blue. The band is the dark gray at 70%. */
+  --ak-dark: #1d1f20;
+  --ak-blue: #18d1ff;
+  --hud-band: rgba(29,31,32,0.7);
   position: fixed;
   left: 0;
   right: 0;
@@ -1195,6 +1224,9 @@ button.tag-chip:hover{
 }
 #reel-hud .rn{
   display: block;
+  /* Nudged up off the number's highlight, without moving the highlight. */
+  position: relative;
+  top: -2px;
   min-height: 1.4em;
   max-width: 92vw;
   margin-top: 10px;
@@ -1208,14 +1240,39 @@ button.tag-chip:hover{
   color: var(--ink);
   text-transform: uppercase;
 }
+/* The card number, as a dark label on a blue highlight (about 9:1
+   contrast; white on this blue was about 1.8:1). Oswald's digits
+   differ in width (it has no tabular figures), so nothing here is sized by
+   its text: the highlight has a set width, and the two numbers sit in
+   equal fixed slots either side of the slash, which stays centered. All
+   in em, so the whole badge scales with its font size. */
 #reel-hud .rl{
-  display: block;
-  min-height: 1.5em;
+  display: flex;
+  justify-content: center;
+  align-items: baseline;
+  width: 6em; /* the slots and slash take 5.74em of it */
+  min-height: 1.8333em;
+  margin-top: 4px;
+  /* The left padding offsets the letter-spacing trailing the slash, which
+     would otherwise leave it a hair left of center. */
+  padding: 0.1667em 0 0.1667em 0.16em;
   font-family: var(--font-display);
-  font-size: 12px;
+  font-weight: 700;
+  font-size: 14.4px;
   line-height: 1.5;
-  letter-spacing: 0.2em;
-  color: var(--accent);
+  letter-spacing: 0.16em;
+  color: var(--ak-dark);
+  background: var(--ak-blue);
+}
+/* 2.2em fits the widest three digits here, "000" (2.13em in this bold
+   spacing). */
+#reel-hud .n-cur,
+#reel-hud .n-all{
+  width: 2.2em;
+}
+/* The hero card has no number: keep the space, drop the highlight. */
+#reel-hud .rl:empty{
+  visibility: hidden;
 }
 
 /* ---------- outro ---------- */

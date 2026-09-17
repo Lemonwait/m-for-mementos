@@ -65,6 +65,13 @@
 
   const total = MEMENTOS.length;
   const years = [...new Set(MEMENTOS.map((m) => m.year))];
+  // "NNN / total", as used by the top counter and the roulette caption.
+  // Each side sits in its own fixed-width slot (the .n-cur/.n-all rules in
+  // style.css), so neither the digits' uneven widths nor the number itself
+  // can move the slash or resize the box around it.
+  function countHtml(n) {
+    return `<span class="n-cur">${String(n).padStart(3, "0")}</span><span class="n-sep">/</span><span class="n-all">${total}</span>`;
+  }
 
 
   // ---- build year rail ----
@@ -1583,7 +1590,7 @@
       if (activeSection) deactivateCurrent();
       yearWatermarkEl.classList.add("hidden");
       Object.values(yearButtons).forEach((btn) => btn.classList.remove("active"));
-      counterEl.textContent = `00 / ${total}`;
+      counterEl.innerHTML = countHtml(0);
       syncVideoSlotVisibility();
       return;
     }
@@ -1597,7 +1604,7 @@
     }
     const i = Number(winner.dataset.index);
     const year = Number(winner.dataset.year);
-    counterEl.textContent = `${String(i + 1).padStart(2, "0")} / ${total}`;
+    counterEl.innerHTML = countHtml(i + 1);
     Object.entries(yearButtons).forEach(([y, btn]) => btn.classList.toggle("active", Number(y) === year));
     renderYearWatermark(year);
     yearWatermarkEl.classList.remove("hidden");
@@ -1768,6 +1775,12 @@
 
   const reelPreloaded = new Map();
   function reelPreloadAround(c) {
+    // Lets go of pictures that are no longer near. Nothing used to leave
+    // this map, so a long scroll kept a reference to every card's full-size
+    // picture, and with it the browser's decoded copy.
+    for (const i of reelPreloaded.keys()) {
+      if (Math.abs(i - c) > REEL_PRELOAD_RADIUS) reelPreloaded.delete(i);
+    }
     for (let i = c - REEL_PRELOAD_RADIUS; i <= c + REEL_PRELOAD_RADIUS; i++) {
       if (i < 1 || i > reelLast || reelPreloaded.has(i)) continue;
       const im = new Image();
@@ -1856,7 +1869,7 @@
       reelHudFor = cur;
       const m = cur > 0 ? MEMENTOS[cur - 1] : null;
       reelHud.querySelector(".ry").textContent = m ? m.year : "";
-      reelHud.querySelector(".rl").textContent = m ? `${String(cur).padStart(3, "0")} / ${total}` : "";
+      reelHud.querySelector(".rl").innerHTML = m ? countHtml(cur) : "";
       reelHud.querySelector(".rn").textContent = m ? m.name : "M FOR MEMENTOS";
     }
   }
@@ -2116,7 +2129,7 @@
     // real "counter still reads 127/131 while the endscreen is on screen"
     // bug: it was relying on a 'scroll' event that this transition never
     // fires to begin with.
-    counterEl.textContent = `${total + 1} / ${total}`;
+    counterEl.innerHTML = countHtml(total + 1);
     // Same "nothing else will ever fix this" reasoning as the counter
     // line above applies to the year rail/watermark too -- updateDisplay
     // owns both normally, but it's frozen for as long as the outro is
@@ -2148,7 +2161,7 @@
     // Same reasoning as revealEnding's counter line: own it explicitly
     // rather than hoping a 'scroll' event will come along and fix it.
     const i = Number(lastEventEl.dataset.index);
-    counterEl.textContent = `${String(i + 1).padStart(2, "0")} / ${total}`;
+    counterEl.innerHTML = countHtml(i + 1);
     const year = Number(lastEventEl.dataset.year);
     Object.entries(yearButtons).forEach(([y, btn]) => btn.classList.toggle("active", Number(y) === year));
     renderYearWatermark(year);
