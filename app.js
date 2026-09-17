@@ -1348,7 +1348,24 @@
     if (activateImmediately || holder._wantsActivate) requestActivate(entry);
   }
 
+  // YouTube names its player iframe after the video through the title
+  // attribute, which the browser also shows as a tooltip -- confirmed
+  // popping up over the video on entering and leaving fullscreen, when the
+  // browser re-checks what sits under a cursor that hasn't moved. The name
+  // moves to aria-label instead (the same accessible name, no tooltip),
+  // every time YouTube sets it.
+  function untitleVideoFrames(holder) {
+    const move = () => {
+      for (const iframe of holder.querySelectorAll("iframe[title]")) {
+        iframe.setAttribute("aria-label", iframe.getAttribute("title"));
+        iframe.removeAttribute("title");
+      }
+    };
+    new MutationObserver(move).observe(holder, { subtree: true, childList: true, attributes: true, attributeFilter: ["title"] });
+  }
+
   document.querySelectorAll(".yt-frame[data-yt-id]").forEach((holder) => {
+    untitleVideoFrames(holder);
     const section = holder.closest(".event");
     // A stable back-reference, captured once here while the holder is
     // still sitting in its original spot -- switchTagVariant's own
