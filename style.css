@@ -455,6 +455,68 @@ body.chrome-hidden .topbar-right:not(:hover) #sound-toggle .bar{
   background: var(--ink);
 }
 
+/* ---------- side rails (wide windows) ---------- */
+/* When the window is wide enough that the fitted 16:9 video leaves real
+   bars at its sides (app.js toggles body.side-rails), the site's own UI
+   moves into them, clear of YouTube's title, icons and control strip:
+   logo, big year and counter down the left bar; buttons and year rail down
+   the right. --bar-x is one side bar's width. */
+:root{ --bar-x: calc((100vw - min(100vw, 177.78vh)) / 2); }
+body.side-rails #top-bar{ background: none; }
+body.side-rails .topbar-left{
+  position: fixed;
+  top: 24px;
+  left: calc(var(--bar-x) / 2);
+  transform: translateX(-50%);
+  text-align: center;
+}
+body.side-rails .wm-line{ display: block; }
+body.side-rails .wm-dot{ display: none; }
+/* Placed by offset, not transform: a transform here would become the
+   containing block for #counter's own position:fixed below. */
+body.side-rails .topbar-right{
+  position: fixed;
+  top: 24px;
+  right: calc(var(--bar-x) / 2 - 15px);
+  flex-direction: column;
+  margin-top: 0;
+}
+body.side-rails #counter{
+  position: fixed;
+  left: calc(var(--bar-x) / 2);
+  bottom: 24px;
+  transform: translateX(-50%);
+}
+/* The flyouts open to the left of their button, since the next button in
+   the column sits where they used to open. */
+body.side-rails .chrome-toggle-menu,
+body.side-rails .sound-toggle-menu{
+  top: 50%;
+  left: auto;
+  right: 100%;
+  transform: translateY(-50%);
+  padding-top: 0;
+  padding-right: 8px;
+}
+body.side-rails #year-rail{
+  right: calc(var(--bar-x) / 2);
+  transform: translate(50%, -50%);
+}
+/* Turned on its side to fit the left bar, reading bottom to top. */
+body.side-rails #year-watermark{
+  left: calc(var(--bar-x) / 2);
+  top: 50%;
+  bottom: auto;
+  transform: translate(-50%, -50%) rotate(-90deg);
+  font-size: min(150px, calc(var(--bar-x) * 0.95));
+}
+/* The card text starts inside the video and sits well above YouTube's
+   control strip (about 130px tall at this size). */
+body.side-rails .event-body{
+  padding-left: calc(var(--bar-x) + 56px);
+  padding-bottom: 190px;
+}
+
 /* ---------- year rail ---------- */
 #year-rail{
   position: fixed;

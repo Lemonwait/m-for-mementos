@@ -398,6 +398,17 @@
     return obs;
   }
 
+  // ---- side rails ----
+  // When the fitted 16:9 video leaves bars at least this wide at its sides,
+  // the site's own UI moves into them (body.side-rails in style.css), clear
+  // of YouTube's controls. Narrower windows keep the top bar.
+  const RAIL_MIN_BAR = 96;
+  function updateRailsLayout() {
+    const bar = (innerWidth - Math.min(innerWidth, (innerHeight * 16) / 9)) / 2;
+    document.body.classList.toggle("side-rails", bar >= RAIL_MIN_BAR);
+  }
+  updateRailsLayout();
+
   // ---- site-wide "hide UI" toggle ----
   // Hides the header (wordmark/counter), the year rail, the year
   // watermark, and the active card's own text panel -- everything
@@ -2329,6 +2340,7 @@
   window.addEventListener("resize", () => {
     if (resizeRaf) cancelAnimationFrame(resizeRaf);
     resizeRaf = requestAnimationFrame(() => {
+      updateRailsLayout();
       // A resize is the one thing that genuinely invalidates the cached
       // geometry (every card is min-height:100vh, so a viewport-height
       // change resizes all 131 and moves every document offset). Both
