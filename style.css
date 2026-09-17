@@ -151,25 +151,28 @@ body.chrome-hidden .topbar-right:hover #sound-toggle{
 .n-all{ text-align: left; }
 .n-sep{ padding: 0 0.3em; }
 
+/* Kept compact: the slots' own slack already leaves the digits about 5px
+   off the border, so the side padding is small. */
 #counter{
   display: inline-flex;
   align-items: baseline;
   font-family: var(--font-display);
   font-size: 12px;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.1em;
   color: var(--accent);
   border: 1px solid var(--accent-dim);
   /* The extra left padding offsets the letter-spacing trailing the slash,
      which would otherwise sit a hair left of center. */
-  padding: 5px 12px 5px calc(12px + 0.14em);
+  padding: 5px 3px 5px calc(3px + 0.1em);
   border-radius: 2px;
   background: rgba(0,176,255,0.06);
 }
-/* "000" is the widest three digits, 1.97em in this spacing. */
+/* "000" is the widest three digits, about 1.86em in this spacing. */
 #counter .n-cur,
 #counter .n-all{
-  width: 2.05em;
+  width: 1.88em;
 }
+#counter .n-sep{ padding: 0 0.15em; }
 .topbar-right{
   display: flex;
   align-items: center;
