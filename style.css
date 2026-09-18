@@ -1229,6 +1229,10 @@ button.tag-chip:hover{
   text-align: center;
   color: var(--ink);
 }
+/* The ?slide trial (see SLIDE_MODE in app.js): full-screen cards slide
+   edge to edge, so no shadow between them. */
+body.slide-mode .reel-card{ box-shadow: none; }
+
 /* A window cut out of a dim overlay over the card in the middle of the
    reel -- the roulette's pointer, marked only by being brighter than the
    cards around it (no outline). The overlay (its box-shadow) and the

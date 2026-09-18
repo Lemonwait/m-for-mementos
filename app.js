@@ -1179,21 +1179,17 @@
     // through instead of starting fresh.
     const { ytStart } = entry.holder.dataset;
     entry.player.seekTo(ytStart ? Number(ytStart) : 0, true);
-    // playVideo() BEFORE unMute(), not after -- a real, confirmed bug in
-    // the other order: on a genuinely fresh page load (no click anywhere
-    // yet, so no sticky activation), unmuting first meant this resumed
-    // playVideo() call was asking the browser for unmuted-playback-via-
-    // script, no gesture behind it -- exactly what autoplay policy
-    // blocks, silently, leaving YouTube's own paused/thumbnail state on
-    // screen instead of playing at all ("doesn't autoplay unless I click
-    // the harmony waves" -- that click is what supplies the missing
-    // activation, papering over this exact ordering bug). Resuming
-    // muted first is unconditionally allowed regardless of activation;
-    // unmuting AFTER, on media that's already playing, isn't held to the
-    // same restriction.
+    // Starts muted, always: muted playback is the one kind a browser allows
+    // with no click or key press on the page first (a wheel doesn't count).
+    // The sound comes on once the video is really playing (applySound, from
+    // onStateChange). Unmuting here, even straight after playVideo(), raced
+    // the start: both calls reach YouTube only as messages, so whenever the
+    // video wasn't already running when the unmute landed, the start itself
+    // became playback with sound -- refused, leaving YouTube's untouched
+    // thumbnail and play button on screen (confirmed live: "sometimes it
+    // doesn't autoplay at all").
+    entry.player.mute();
     entry.player.playVideo();
-    if (soundEnabled) entry.player.unMute();
-    else entry.player.mute();
     if (typeof entry.player.setVolume === "function") entry.player.setVolume(volumeLevel);
     setTimeout(() => revealEntry(entry), VIDEO_REVEAL_FALLBACK);
     // Only now does a scroll-out mean anything to reset -- a preload that
@@ -1209,6 +1205,51 @@
     // there instead still reaches the right section either way.
     observeVideoVisibility(entry.holder._homeParent.closest(".event"), entry);
   }
+  // ---- sound, once a video is really playing ----
+  // engagePlayer always starts a video muted; this turns the sound on at its
+  // first PLAYING. A browser that still won't allow sound (no click or key
+  // press on the page yet) answers the unmute by pausing the video, which
+  // soundRefused catches: the video carries on muted, and the next click or
+  // key press anywhere brings the sound in (soundOnGesture). With no click or
+  // key press yet, a pause that soon after can't have been the viewer's own.
+  const SOUND_REFUSAL_WINDOW_MS = 1500;
+  let soundAwaitsGesture = false;
+  function applySound(entry) {
+    if (entry.soundApplied) return;
+    entry.soundApplied = true;
+    if (!soundEnabled) return;
+    entry.player.unMute();
+    if (typeof entry.player.setVolume === "function") entry.player.setVolume(volumeLevel);
+    entry.unmutedAt = performance.now();
+  }
+  function soundRefused(entry) {
+    if (!entry.unmutedAt || performance.now() - entry.unmutedAt > SOUND_REFUSAL_WINDOW_MS) return;
+    if (!navigator.userActivation || navigator.userActivation.hasBeenActive) return;
+    entry.unmutedAt = 0;
+    soundAwaitsGesture = true;
+    entry.player.mute();
+    // Asking to play from inside the pause notification itself, while
+    // YouTube is still finishing that pause, got ignored in testing; a
+    // moment later it resumes. Asked once more if it still hasn't.
+    const live = () => !entry.retired && entryByHolder.get(entry.holder) === entry;
+    setTimeout(() => {
+      if (!live()) return;
+      entry.player.playVideo();
+      setTimeout(() => {
+        if (live() && ![1, 3].includes(entry.player.getPlayerState())) entry.player.playVideo();
+      }, 800);
+    }, 200);
+  }
+  function soundOnGesture() {
+    if (!soundAwaitsGesture) return;
+    soundAwaitsGesture = false;
+    if (!soundEnabled || !currentlyPlaying) return;
+    currentlyPlaying.player.unMute();
+    if (typeof currentlyPlaying.player.setVolume === "function") currentlyPlaying.player.setVolume(volumeLevel);
+  }
+  window.addEventListener("pointerdown", soundOnGesture, true);
+  window.addEventListener("keydown", soundOnGesture, true);
+
   // Called on first PLAYING and by engagePlayer's fallback timer, whichever
   // comes first. Both can arrive after this entry was unmounted -- possibly
   // with its holder already remounted for another video -- so it only acts
@@ -1347,7 +1388,12 @@
           // can still arrive -- it mustn't take over from the one on screen.
           if (e.data === 1 && !entry.retired) { // PLAYING
             setCurrentlyPlaying(entry);
-            if (entry.activated) revealEntry(entry);
+            if (entry.activated) {
+              applySound(entry);
+              revealEntry(entry);
+            }
+          } else if (e.data === 2 && !entry.retired) { // PAUSED
+            soundRefused(entry);
           }
         },
       },
@@ -1754,7 +1800,19 @@
   // a time, and only while the overlay fully covers it -- video mounting,
   // the ending swipe, the counter and the year rail all keep running off
   // real scroll position exactly as before.
-  const REEL = { curve: 16, cardSize: 1, gap: 110, zoomOutMs: 380, zoomInMs: 650, roll: 9, holdSpeed: 4, dim: 0.55, centerDim: 0.15 }; // cards off-center at 45% brightness, the center one at 85%
+  // Trial: ?slide in the URL keeps the reel's card-to-card roll and its
+  // caption banner and dimming, but drops the zoom-out and the drum: full-size
+  // cards on a flat strip with no gap, so a change reads as one full-screen
+  // slide. The card fills the screen, so the dimming's center window does
+  // too, and everything shows at the center's brightness. Covering is quick,
+  // since there's no zoom to wait on; landing waits for the card's video to
+  // be playing (landingVideoReady), then crossfades slowly and gently
+  // straight onto it (see renderReel).
+  const SLIDE_MODE = new URLSearchParams(location.search).has("slide");
+  if (SLIDE_MODE) document.body.classList.add("slide-mode");
+  const REEL = SLIDE_MODE
+    ? { curve: 0, cardSize: 1, gap: 0, zoomOutMs: 120, zoomInMs: 500, roll: 9, holdSpeed: 4, dim: 0.55, centerDim: 0.15 }
+    : { curve: 16, cardSize: 1, gap: 110, zoomOutMs: 380, zoomInMs: 650, roll: 9, holdSpeed: 4, dim: 0.55, centerDim: 0.15 }; // cards off-center at 45% brightness, the center one at 85%
   const REEL_IDLE_MS = 170;             // no input for this long = the gesture is over
   const REEL_OUT_DWELL_MS = 120;        // minimum time fully zoomed out, so one tick doesn't read as a flicker
   const REEL_HANDOFF_TIMEOUT_MS = 1500; // zoom back in anyway if a card's art never finishes loading
@@ -1786,7 +1844,7 @@
   const reelW = 1920;
   const reelPitch = () => REEL_H + REEL.gap;
   const reelZoomIn = () => Math.max(innerWidth / reelW, innerHeight / REEL_H);
-  const reelZoomOut = () => Math.min((REEL.cardSize * innerHeight) / REEL_H, (0.9 * innerWidth) / reelW);
+  const reelZoomOut = () => (SLIDE_MODE ? reelZoomIn() : Math.min((REEL.cardSize * innerHeight) / REEL_H, (0.9 * innerWidth) / reelW));
 
   const reelPreloaded = new Map();
   function reelPreloadAround(c) {
@@ -1882,7 +1940,12 @@
     for (const cell of reelCells.values()) placeReelCard(cell, cell.i - reelPos, z, persp);
     const vis = reelZoomT > 0 ? "visible" : "hidden";
     reelStage.style.visibility = reelSpot.style.visibility = reelHud.style.visibility = vis;
-    reelStage.style.opacity = rClamp(reelZoomT * 5, 0, 1).toFixed(3);
+    // Opaque from zoomT 0.2 on the way out: the point the page underneath may
+    // change. In the ?slide trial, landing fades out over its whole length
+    // instead of its last fifth -- a gentle crossfade into the card, which the
+    // page has already switched to by then.
+    const stageAlpha = SLIDE_MODE && reelZoomTo === 0 ? reelZoomT : reelZoomT * 5;
+    reelStage.style.opacity = rClamp(stageAlpha, 0, 1).toFixed(3);
     reelSpot.style.width = reelW * z + "px";
     reelSpot.style.height = REEL_H * z + "px";
     reelSpot.style.transform = `translate(${vw / 2 - (reelW * z) / 2}px, ${vh / 2 - (REEL_H * z) / 2}px)`;
@@ -1994,6 +2057,19 @@
     releaseDistantArt(idx);
   }
   const liveArtReady = (idx, now) => artReadyIdx === idx || now - artWaitSince > REEL_HANDOFF_TIMEOUT_MS;
+  // The ?slide trial lifts its cover straight onto the playing video, with no
+  // stop on the card's still in between: it holds until the landing card's
+  // video is revealed -- at its first PLAYING, or by engagePlayer's fallback
+  // timer if playback never starts -- or not at all for a card with no video.
+  // SLIDE_VIDEO_WAIT_MS lifts it regardless, in case no player ever mounts.
+  const SLIDE_VIDEO_WAIT_MS = 4500;
+  function landingVideoReady(idx, now) {
+    if (now - artWaitSince > SLIDE_VIDEO_WAIT_MS) return true;
+    const holder = idx > 0 ? eventEls[idx - 1]._videoHolder : null;
+    if (!holder) return true;
+    const entry = entryByHolder.get(holder);
+    return !!(entry && entry.revealed);
+  }
 
   // Starts the landing card's video the moment the reel knows where it's
   // landing -- never for cards it only rolls past, so no YouTube frame gets
@@ -2055,7 +2131,7 @@
     if (settled) { applyState(landing); rememberCard(landing); prepareLiveArt(landing); }
 
     if (!settled) setReelZoom(1, now);
-    else if (now >= reelOutReadyAt && liveArtReady(landing, now)) setReelZoom(0, now);
+    else if (now >= reelOutReadyAt && liveArtReady(landing, now) && (!SLIDE_MODE || landingVideoReady(landing, now))) setReelZoom(0, now);
 
     const p = rClamp((now - reelZoomStart) / reelZoomDur, 0, 1);
     reelZoomT = reelZoomFrom + (reelZoomTo - reelZoomFrom) * (reelZoomTo === 1 ? rEaseOut(p) : rEaseInOut(p));
