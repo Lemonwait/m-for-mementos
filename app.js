@@ -1179,16 +1179,23 @@
     // through instead of starting fresh.
     const { ytStart } = entry.holder.dataset;
     entry.player.seekTo(ytStart ? Number(ytStart) : 0, true);
-    // Starts muted, always: muted playback is the one kind a browser allows
-    // with no click or key press on the page first (a wheel doesn't count).
-    // The sound comes on once the video is really playing (applySound, from
-    // onStateChange). Unmuting here, even straight after playVideo(), raced
-    // the start: both calls reach YouTube only as messages, so whenever the
-    // video wasn't already running when the unmute landed, the start itself
-    // became playback with sound -- refused, leaving YouTube's untouched
-    // thumbnail and play button on screen (confirmed live: "sometimes it
-    // doesn't autoplay at all").
-    entry.player.mute();
+    // Once the page has had a click or key press, a browser allows playback
+    // with sound, so the video starts unmuted and narration that begins at
+    // 0:00 isn't clipped. Before that (a wheel doesn't count) it starts
+    // muted, the one kind of start a browser never refuses, and applySound
+    // tries for sound once the video is really playing. Asking for sound
+    // without that permission, even straight after playVideo(), raced the
+    // start: both calls reach YouTube only as messages, so whenever the video
+    // wasn't already running when the unmute landed, the start itself became
+    // playback with sound -- refused, leaving YouTube's untouched thumbnail
+    // and play button on screen (confirmed live: "sometimes it doesn't
+    // autoplay at all").
+    if (soundEnabled && hadUserActivation()) {
+      entry.player.unMute();
+      entry.soundApplied = true;
+    } else {
+      entry.player.mute();
+    }
     entry.player.playVideo();
     if (typeof entry.player.setVolume === "function") entry.player.setVolume(volumeLevel);
     setTimeout(() => revealEntry(entry), VIDEO_REVEAL_FALLBACK);
@@ -1206,14 +1213,18 @@
     observeVideoVisibility(entry.holder._homeParent.closest(".event"), entry);
   }
   // ---- sound, once a video is really playing ----
-  // engagePlayer always starts a video muted; this turns the sound on at its
-  // first PLAYING. A browser that still won't allow sound (no click or key
+  // Without a click or key press on the page yet, engagePlayer starts a video
+  // muted; this turns the sound on at its first PLAYING. A browser that still won't allow sound (no click or key
   // press on the page yet) answers the unmute by pausing the video, which
   // soundRefused catches: the video carries on muted, and the next click or
   // key press anywhere brings the sound in (soundOnGesture). With no click or
   // key press yet, a pause that soon after can't have been the viewer's own.
   const SOUND_REFUSAL_WINDOW_MS = 1500;
   let soundAwaitsGesture = false;
+  // Whether this page has had a click or key press since it loaded, the
+  // permission a browser wants before playback with sound. A click inside a
+  // YouTube frame counts too: activation reaches the frames above it.
+  const hadUserActivation = () => !!(navigator.userActivation && navigator.userActivation.hasBeenActive);
   function applySound(entry) {
     if (entry.soundApplied) return;
     entry.soundApplied = true;
@@ -1224,7 +1235,7 @@
   }
   function soundRefused(entry) {
     if (!entry.unmutedAt || performance.now() - entry.unmutedAt > SOUND_REFUSAL_WINDOW_MS) return;
-    if (!navigator.userActivation || navigator.userActivation.hasBeenActive) return;
+    if (!navigator.userActivation || hadUserActivation()) return;
     entry.unmutedAt = 0;
     soundAwaitsGesture = true;
     entry.player.mute();
