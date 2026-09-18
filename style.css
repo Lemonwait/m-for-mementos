@@ -208,17 +208,16 @@ body.chrome-hidden .topbar-right:hover #sound-toggle{
   z-index: 101;
   padding-top: 8px;
   opacity: 0;
-  /* Always auto, not toggled with the opacity -- a real, confirmed
-     second half of the same gap bug: pointer-events:none makes an
-     element (and the space it occupies) invisible to hit-testing
-     entirely, so even after closing the VISUAL gap above, a mouse
-     crossing the padding while it was still none-by-default fell
-     through to whatever's behind it instead of registering as hovering
-     this element -- :hover never bubbled up to .chrome-toggle-wrap, so
-     the menu still closed before the cursor arrived. The buttons inside
-     .chrome-toggle-panel are unreachable anyway while collapsed
-     (opacity:0, off in the corner) regardless of this staying on. */
-  pointer-events: auto;
+  /* Ignores the mouse until its own button is hovered or focused (the
+     :hover/:focus-within rule below). While it was always hit-testable,
+     the invisible panel caught a mouse merely passing over it -- in the
+     side-rails layout it sits right on YouTube's settings icons -- opening
+     itself, bringing the hidden buttons back (.topbar-right:hover), and
+     blocking clicks to YouTube underneath. It turns hit-testable the
+     moment the button is hovered, and it starts flush against the button
+     (the 8px gap is padding inside it), so the mouse still crosses onto it
+     without :hover ever leaving .chrome-toggle-wrap. */
+  pointer-events: none;
   transition: opacity 0.15s ease;
 }
 .chrome-toggle-panel{
@@ -234,11 +233,12 @@ body.chrome-hidden .topbar-right:hover #sound-toggle{
 .chrome-toggle-wrap:hover .chrome-toggle-menu,
 .chrome-toggle-wrap:focus-within .chrome-toggle-menu{
   opacity: 1;
+  pointer-events: auto;
 }
 /* Hover-revealed volume slider for #sound-toggle -- same padding-bridge
    structure as .chrome-toggle-wrap above (see its own comments for why
-   the menu starts at top:100% with zero gap, and why pointer-events
-   stays permanently auto instead of toggling with opacity). */
+   the menu starts flush against the button, and why it ignores the mouse
+   until the button itself is hovered). */
 .sound-toggle-wrap{
   position: relative;
   pointer-events: auto;
@@ -251,7 +251,7 @@ body.chrome-hidden .topbar-right:hover #sound-toggle{
   z-index: 101;
   padding-top: 8px;
   opacity: 0;
-  pointer-events: auto;
+  pointer-events: none;
   transition: opacity 0.15s ease;
 }
 .sound-toggle-panel{
@@ -265,6 +265,7 @@ body.chrome-hidden .topbar-right:hover #sound-toggle{
 .sound-toggle-wrap:hover .sound-toggle-menu,
 .sound-toggle-wrap:focus-within .sound-toggle-menu{
   opacity: 1;
+  pointer-events: auto;
 }
 /* Explicit safety-net close (see app.js's own comment on where this
    gets toggled) -- !important so it wins over the hover/focus-within
