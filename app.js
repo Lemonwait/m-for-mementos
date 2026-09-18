@@ -1800,15 +1800,15 @@
   // a time, and only while the overlay fully covers it -- video mounting,
   // the ending swipe, the counter and the year rail all keep running off
   // real scroll position exactly as before.
-  // Trial: ?slide in the URL keeps the reel's card-to-card roll and its
-  // caption banner and dimming, but drops the zoom-out and the drum: full-size
-  // cards on a flat strip with no gap, so a change reads as one full-screen
-  // slide. The card fills the screen, so the dimming's center window does
-  // too, and everything shows at the center's brightness. Covering is quick,
-  // since there's no zoom to wait on; landing waits for the card's video to
-  // be playing (landingVideoReady), then crossfades slowly and gently
-  // straight onto it (see renderReel).
-  const SLIDE_MODE = new URLSearchParams(location.search).has("slide");
+  // The card change is a slide: the reel's card-to-card roll, caption banner
+  // and dimming, on a flat strip of full-size cards with no gap and no
+  // zoom-out, so a change reads as one full-screen slide. The card fills the
+  // screen, so the dimming's center window does too, and everything shows at
+  // the center's brightness. Covering is quick, since there's no zoom to wait
+  // on; landing waits for the card's video to be playing (landingVideoReady),
+  // then crossfades slowly and gently straight onto it (see renderReel).
+  // ?roulette in the URL brings back the zoomed-out drum it replaced.
+  const SLIDE_MODE = !new URLSearchParams(location.search).has("roulette");
   if (SLIDE_MODE) document.body.classList.add("slide-mode");
   const REEL = SLIDE_MODE
     ? { curve: 0, cardSize: 1, gap: 0, zoomOutMs: 120, zoomInMs: 500, roll: 9, holdSpeed: 4, dim: 0.55, centerDim: 0.15 }
@@ -1941,9 +1941,9 @@
     const vis = reelZoomT > 0 ? "visible" : "hidden";
     reelStage.style.visibility = reelSpot.style.visibility = reelHud.style.visibility = vis;
     // Opaque from zoomT 0.2 on the way out: the point the page underneath may
-    // change. In the ?slide trial, landing fades out over its whole length
-    // instead of its last fifth -- a gentle crossfade into the card, which the
-    // page has already switched to by then.
+    // change. For the slide, landing fades out over its whole length instead
+    // of its last fifth -- a gentle crossfade into the card, which the page
+    // has already switched to by then.
     const stageAlpha = SLIDE_MODE && reelZoomTo === 0 ? reelZoomT : reelZoomT * 5;
     reelStage.style.opacity = rClamp(stageAlpha, 0, 1).toFixed(3);
     reelSpot.style.width = reelW * z + "px";
@@ -2057,8 +2057,8 @@
     releaseDistantArt(idx);
   }
   const liveArtReady = (idx, now) => artReadyIdx === idx || now - artWaitSince > REEL_HANDOFF_TIMEOUT_MS;
-  // The ?slide trial lifts its cover straight onto the playing video, with no
-  // stop on the card's still in between: it holds until the landing card's
+  // The slide lifts its cover straight onto the playing video, with no stop
+  // on the card's still in between: it holds until the landing card's
   // video is revealed -- at its first PLAYING, or by engagePlayer's fallback
   // timer if playback never starts -- or not at all for a card with no video.
   // SLIDE_VIDEO_WAIT_MS lifts it regardless, in case no player ever mounts.
